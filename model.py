@@ -1,5 +1,12 @@
+"""
+@author: ethan-w-roland
+@date: 2025-07-20
+@title: Toeplitz Mixer Model
+"""
+
 from dataclasses import dataclass
-import torch, torch.nn as nn
+import torch
+import torch.nn as nn
 
 torch.set_float32_matmul_precision("medium")
 
@@ -33,6 +40,28 @@ class Toeplitz(nn.Module):
         out = (x.reshape(B * E, T) @ W).view(B, E, T)
         out = out + self.bias[:T].view(1, 1, T)
         return out.transpose(1, 2) # (B, T, E)
+
+    @torch.inference_mode()
+    def step(
+        self,
+        n1_t: torch.Tensor, # (B, E) normalized new feature
+        hist: torch.Tensor | None, # (B, E, Tprev) or None
+        max_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+
+        if hist is None:
+            hist = n1_t.unsqueeze(-1)                       # (B,E,1)
+        else:
+            hist = torch.cat([hist, n1_t.unsqueeze(-1)], dim=-1)  # (B,E,Tprev+1)
+
+        if hist.size(-1) > max_len:
+            hist = hist[:, :, -max_len:].contiguous()
+
+        T = hist.size(-1)
+        w = self.weight[:T] # (T,)
+        y_t = torch.einsum("bet,t->be", hist, torch.flip(w, dims=[0]))
+        y_t = y_t + self.bias[T - 1] # scalar bias for current time
+        return y_t, hist
         
 
 class MLP(nn.Module):
@@ -89,98 +118,73 @@ class ToeplitzMixerModel(nn.Module):
         x = self.out_emb(x)
         return x
 
-    # def generate(self, x: torch.Tensor, max_tokens: int) -> torch.Tensor:
-
-    #     if x.dim() == 1:
-    #         x = x.unsqueeze(0)
-    #     block_size = self.config.block_size
-
-    #     with torch.inference_mode():
-    #         for _ in range(max_tokens):
-    #             x_cond = x[:, -block_size:]                  # crop to context
-    #             logits = self.forward(x_cond)                # (B, Tc, V)
-    #             next_id = logits[:, -1, :].argmax(dim=-1)    # (B,)
-    #             x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
-
-    #     return x
-
-    def generate(self, x: torch.Tensor, max_tokens: int) -> torch.Tensor:
+    @torch.inference_mode()
+    def generate_old(self, x: torch.Tensor, max_tokens: int) -> torch.Tensor:
         """
-        Cached greedy autoregressive generation.
-
-        - Crops the prompt to the last `block_size` tokens (must match Toeplitz length).
-        - Builds per-block caches of norm1 histories during a prefill pass.
-        - Decodes one token at a time, updating caches and computing only the last position.
+        Un-cached greedy autoregressive generation
         """
-        device = next(self.parameters()).device
+
         if x.dim() == 1:
             x = x.unsqueeze(0)
-        x = x.to(device)
+        block_size = self.config.block_size
+
+        with torch.inference_mode():
+            for _ in range(max_tokens):
+                x_cond = x[:, -block_size:]                  # crop to context
+                logits = self.forward(x_cond)                # (B, Tc, V)
+                next_id = logits[:, -1, :].argmax(dim=-1)    # (B,)
+                x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
+
+        return x
+
+    @torch.inference_mode()
+    def generate(self, x: torch.Tensor, max_tokens: int) -> torch.Tensor:
+        """
+        Cached greedy autoregressive generation
+        """
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
 
         block_size = self.config.block_size
 
-        @torch.inference_mode()
-        def prefill_and_build_cache(tokens: torch.Tensor):
-            caches = []
-            h = self.inp_emb(tokens)  # (B, T, E)
+        # ---- PREFILL ----
+        x = x[:, -block_size:]
 
-            for blk in self.blocks:
-                n1 = blk.norm1(h)                      # (B, T, E)
-                hist = n1.transpose(1, 2).contiguous() # (B, E, T)
-                caches.append({"hist": hist})
+        # run one forward pass, building per-block histories of norm1(x)
+        caches: list[dict] = []
+        h = self.inp_emb(x)                                    # (B,T,E)
+        for blk in self.blocks:
+            n1 = blk.norm1(h)                                  # (B,T,E)
+            hist = n1.transpose(1, 2).contiguous()             # (B,E,T)
+            caches.append({"hist": hist})
+            mix_full = blk.mixer(n1)                           # (B,T,E)
+            h = h + mix_full
+            n2 = blk.norm2(h)
+            h = h + blk.mlp(n2)
 
-                mix_full = blk.mixer(n1)               # (B, T, E)
-                h = h + mix_full
-                n2 = blk.norm2(h)
-                h = h + blk.mlp(n2)
+        h = self.norm(h)
+        logits = self.out_emb(h)                               # (B,T,V)
 
-            h = self.norm(h)
-            logits = self.out_emb(h)                   # (B, T, V)
-            return logits, caches
+        # ---- DECODE ----
+        for _ in range(max_tokens):
+            next_ids = logits[:, -1, :].argmax(dim=-1)         # (B,)
+            x = torch.cat([x, next_ids.unsqueeze(1)], dim=1)
 
-        @torch.inference_mode()
-        def step_once(next_token_ids: torch.Tensor, caches: list):
-            h_t = self.inp_emb(next_token_ids)         # (B, E)
+            # single-step through blocks using step()
+            h_t = self.inp_emb(next_ids)                       # (B,E)
             new_caches = []
-
             for blk, cache in zip(self.blocks, caches):
-                n1_t = blk.norm1(h_t)                  # (B, E)
-
-                hist = cache["hist"]                   # (B, E, Tprev)
-                hist = torch.cat([hist, n1_t.unsqueeze(-1)], dim=-1)  # (B,E,T)
-
-                # Trim cache to context window
-                if hist.size(-1) > block_size:
-                    hist = hist[:, :, -block_size:].contiguous()
-
-                T = hist.size(-1)
-                w = blk.mixer.weight[:T]               # (T,)
-                y_t = torch.einsum("bet,t->be", hist, torch.flip(w, dims=[0]))  # (B,E)
-                y_t = y_t + blk.mixer.bias[T - 1]      # scalar bias for current pos
-
+                n1_t = blk.norm1(h_t)                          # (B,E)
+                y_t, new_hist = blk.mixer.step(n1_t, cache["hist"], block_size)  # (B,E), (B,E,T)
                 h_t = h_t + y_t
                 n2_t = blk.norm2(h_t)
                 h_t = h_t + blk.mlp(n2_t)
-
-                new_caches.append({"hist": hist})
+                new_caches.append({"hist": new_hist})
+            caches = new_caches
 
             h_t = self.norm(h_t)
-            logits_t = self.out_emb(h_t)               # (B, V)
-            return logits_t, new_caches
-
-        with torch.inference_mode():
-            # ---- PREFILL ----
-            # Ensure sequence length <= block_size to match Toeplitz parameter length
-            x = x[:, -block_size:]
-            logits, caches = prefill_and_build_cache(x)
-
-            # ---- DECODE ----
-            for _ in range(max_tokens):
-                next_ids = logits[:, -1, :].argmax(dim=-1)       # (B,)
-                x = torch.cat([x, next_ids.unsqueeze(1)], dim=1)
-
-                logits_t, caches = step_once(next_ids, caches)
-                logits = torch.cat([logits, logits_t.unsqueeze(1)], dim=1)
+            logits_t = self.out_emb(h_t).unsqueeze(1)          # (B,1,V)
+            logits = torch.cat([logits, logits_t], dim=1)
 
         return x
 
