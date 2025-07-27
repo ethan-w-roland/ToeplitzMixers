@@ -1,7 +1,7 @@
 """
 @author: ethan-w-roland
 @date: 2025-07-20
-@title: Toeplitz Mixer Training Script
+@desc: Toeplitz Mixer Training Script
 """
 
 import argparse, json, os, torch, time
@@ -30,7 +30,7 @@ def run(
     assert torch.cuda.is_available()
     device = "cuda"
     
-    # --- Model & Loaders ---
+    # --- Model & Data ---
 
     tokenizer = AutoTokenizer.from_pretrained("SimpleStories/SimpleStories-1.25M")
     vocab_size = load_vocab(data_dir)
@@ -45,7 +45,7 @@ def run(
         device=device,
         pin_memory=True)
 
-    # --- Optimizer & LR Scheduler ---
+    # --- Optimizer ---
 
     opt = optim.AdamW(model.parameters(), lr=lr)
 

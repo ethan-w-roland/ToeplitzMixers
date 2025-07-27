@@ -1,3 +1,9 @@
+"""
+@author: ethan-w-roland
+@date: 2025-07-20
+@desc: DataLoader for memory-mapped token files
+"""
+
 import torch
 import numpy as np
 from typing import Optional, Union

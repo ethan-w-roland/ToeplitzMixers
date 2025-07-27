@@ -1,7 +1,8 @@
-'''
-@author Ethan Roland
+"""
+@author: ethan-w-roland
+@date: 2025-07-27
 @desc A small side experiment exploring EMA as a replacement for the mixer layer.
-'''
+"""
 
 from dataclasses import dataclass
 import torch, torch.nn as nn

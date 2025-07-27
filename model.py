@@ -1,7 +1,7 @@
 """
 @author: ethan-w-roland
 @date: 2025-07-20
-@title: Toeplitz Mixer Model
+@desc: Toeplitz Mixer Model
 """
 
 from dataclasses import dataclass
@@ -151,12 +151,12 @@ class ToeplitzMixerModel(nn.Module):
         x = x[:, -block_size:]
 
         # run one forward pass, building per-block histories of norm1(x)
-        caches: list[dict] = []
+        caches = []
         h = self.inp_emb(x)                                    # (B,T,E)
         for blk in self.blocks:
             n1 = blk.norm1(h)                                  # (B,T,E)
             hist = n1.transpose(1, 2).contiguous()             # (B,E,T)
-            caches.append({"hist": hist})
+            caches.append(hist)
             mix_full = blk.mixer(n1)                           # (B,T,E)
             h = h + mix_full
             n2 = blk.norm2(h)
@@ -175,11 +175,11 @@ class ToeplitzMixerModel(nn.Module):
             new_caches = []
             for blk, cache in zip(self.blocks, caches):
                 n1_t = blk.norm1(h_t)                          # (B,E)
-                y_t, new_hist = blk.mixer.step(n1_t, cache["hist"], block_size)  # (B,E), (B,E,T)
+                y_t, new_hist = blk.mixer.step(n1_t, cache, block_size)  # (B,E), (B,E,T)
                 h_t = h_t + y_t
                 n2_t = blk.norm2(h_t)
                 h_t = h_t + blk.mlp(n2_t)
-                new_caches.append({"hist": new_hist})
+                new_caches.append(new_hist)
             caches = new_caches
 
             h_t = self.norm(h_t)
