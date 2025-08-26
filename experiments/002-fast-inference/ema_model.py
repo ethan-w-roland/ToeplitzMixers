@@ -5,24 +5,29 @@
 """
 
 from dataclasses import dataclass
-import torch, torch.nn as nn
+import torch
+import torch.nn as nn
 
 torch.set_float32_matmul_precision("medium")
 
 
 # ----------------------------- Config ----------------------------- #
 
+
 @dataclass
 class Config:
-    vocab_size: int = 4096          # tiny bc simple stories tokenizer
-    block_size: int = 512           # context window (not required by EMA, but used in generate cropping)
+    vocab_size: int = 4096  # tiny bc simple stories tokenizer
+    block_size: int = (
+        512  # context window (not required by EMA, but used in generate cropping)
+    )
     embed_dim: int = 512
     mlp_dim: int = 512 * 4
     n_layer: int = 8
-    num_emas: int = 4               # number of parallel shared EMAs per block
+    num_emas: int = 4  # number of parallel shared EMAs per block
 
 
 # ----------------------- Mixture-of-EMAs Mixer -------------------- #
+
 
 class EMAMixer(nn.Module):
     """
@@ -45,56 +50,60 @@ class EMAMixer(nn.Module):
 
         # Alpha parameters per EMA (scalars), parameterized via sigmoid
         init_alpha = 0.9
-        inv_sig = torch.log(torch.tensor(init_alpha) / (1 - torch.tensor(init_alpha))) # inverse sigmoid
-        self.alpha_logits = nn.Parameter(inv_sig.expand(self.num_emas).clone()) # (M,)
+        inv_sig = torch.log(
+            torch.tensor(init_alpha) / (1 - torch.tensor(init_alpha))
+        )  # inverse sigmoid
+        self.alpha_logits = nn.Parameter(inv_sig.expand(self.num_emas).clone())  # (M,)
 
         # Bias per EMA (scalar)
-        self.bias = nn.Parameter(torch.zeros(self.num_emas)) # (M,)
+        self.bias = nn.Parameter(torch.zeros(self.num_emas))  # (M,)
 
         # Down-projection after concatenation of M streams
         self.proj = nn.Linear(self.embed_dim * self.num_emas, self.embed_dim, bias=True)
-
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
         B, T, E = x.shape
         M = self.num_emas
-        a = torch.sigmoid(self.alpha_logits) # (M,)
-        s = (1.0 - a) # (M,)
+        a = torch.sigmoid(self.alpha_logits)  # (M,)
+        s = 1.0 - a  # (M,)
 
         # Work in (B, E, T) then vectorize over M
-        x = x.transpose(1, 2) # (B, E, T)
-        t = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(0) # [0, 1, ..., T-1]
+        x = x.transpose(1, 2)  # (B, E, T)
+        t = torch.arange(T, device=x.device, dtype=x.dtype).unsqueeze(
+            0
+        )  # [0, 1, ..., T-1]
 
         # (M, T)
         loga = torch.log(a).unsqueeze(1)
-        a_neg_pow = torch.exp(-loga * t) # alpha^{-k}
-        a_pos_pow = torch.exp( loga * t) # alpha^{t}
+        a_neg_pow = torch.exp(-loga * t)  # alpha^{-k}
+        a_pos_pow = torch.exp(loga * t)  # alpha^{t}
 
         # Weighted cumsum per EMA:
         # z_t^{(m)} = sum_{k<=t} (1-a_m) * a_m^{-k} * x_k
         # Broadcast to (B, M, E, T)
         weighted = x.unsqueeze(1) * s.view(1, M, 1, 1) * a_neg_pow.view(1, M, 1, T)
-        z = torch.cumsum(weighted, dim=-1) # (B, M, E, T)
+        z = torch.cumsum(weighted, dim=-1)  # (B, M, E, T)
 
-        y = z * a_pos_pow.view(1, M, 1, T) # (B, M, E, T)
+        y = z * a_pos_pow.view(1, M, 1, T)  # (B, M, E, T)
 
         # Bias sequence per EMA:
         # b * (1 - a^{t+1}) / (1 - a)
-        a_t1 = a_pos_pow * a.view(M, 1) # (M, T) -> a^{t+1}
-        denom = s.clamp_min(1e-8) # (M,)
-        bias_seq = self.bias.view(M, 1) * (1.0 - a_t1) / denom.view(M, 1) # (M, T)
+        a_t1 = a_pos_pow * a.view(M, 1)  # (M, T) -> a^{t+1}
+        denom = s.clamp_min(1e-8)  # (M,)
+        bias_seq = self.bias.view(M, 1) * (1.0 - a_t1) / denom.view(M, 1)  # (M, T)
         y = y + bias_seq.view(1, M, 1, T)
 
         # y: (B, M, E, T) -> (B, T, E*M)
         y = y.permute(0, 3, 2, 1).contiguous().view(B, T, E * M)
 
         # Down-project
-        y_proj = self.proj(y)                          # (B, T, E)
+        y_proj = self.proj(y)  # (B, T, E)
         return y_proj
 
-
-    def step(self, x_t: torch.Tensor, state: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+    def step(
+        self, x_t: torch.Tensor, state: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         One-step EMA update for all M filters.
 
@@ -111,15 +120,15 @@ class EMAMixer(nn.Module):
         if state is None:
             state = x_t.new_zeros(B, M, E)
 
-        a = torch.sigmoid(self.alpha_logits).view(1, M, 1) # (1, M, 1)
-        s = (1.0 - a) # (1, M, 1)
-        b = self.bias.view(1, M, 1) # (1, M, 1)
+        a = torch.sigmoid(self.alpha_logits).view(1, M, 1)  # (1, M, 1)
+        s = 1.0 - a  # (1, M, 1)
+        b = self.bias.view(1, M, 1)  # (1, M, 1)
 
-        x_exp = x_t.view(B, 1, E) # (B, 1, E)
-        y_t = a * state + s * x_exp + b # (B, M, E)
+        x_exp = x_t.view(B, 1, E)  # (B, 1, E)
+        y_t = a * state + s * x_exp + b  # (B, M, E)
 
-        y_cat = y_t.permute(0, 2, 1).contiguous().view(B, E * M) # (B, E*M)
-        y_proj_t = self.proj(y_cat) # (B, E)
+        y_cat = y_t.permute(0, 2, 1).contiguous().view(B, E * M)  # (B, E*M)
+        y_proj_t = self.proj(y_cat)  # (B, E)
 
         return y_proj_t, y_t
 
@@ -173,10 +182,12 @@ class Block(nn.Module):
 
 # ----------------------------- Model ----------------------------- #
 
+
 class EMAMixerModel(nn.Module):
     """
     Same external name for drop-in use. Internally uses Mixture-of-EMAs mixer.
     """
+
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
@@ -192,7 +203,7 @@ class EMAMixerModel(nn.Module):
     def _init_weights(self, module):
         if isinstance(module, nn.Linear) or isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
-        if hasattr(module, 'bias') and module.bias is not None:
+        if hasattr(module, "bias") and module.bias is not None:
             nn.init.zeros_(module.bias)
 
     # -------- Full forward (training / eval) -------- #
@@ -200,11 +211,11 @@ class EMAMixerModel(nn.Module):
         """
         x: (B, T) token ids
         """
-        x = self.inp_emb(x)                      # (B,T,E)
+        x = self.inp_emb(x)  # (B,T,E)
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
-        x = self.out_emb(x)                      # (B,T,V)
+        x = self.out_emb(x)  # (B,T,V)
         return x
 
     # -------- Prefill to build EMA states -------- #
@@ -215,24 +226,24 @@ class EMAMixerModel(nn.Module):
           - list of per-block EMA states, each (B, M, E)
           - last hidden vector after final block, (B,E)
         """
-        emb = self.inp_emb(x) # (B,T,E)
+        emb = self.inp_emb(x)  # (B,T,E)
         h = emb
         states = []
         for blk in self.blocks:
-            n1 = blk.norm1(h) # (B,T,E)
-            mix = blk.mixer(n1) # (B,T,E)
+            n1 = blk.norm1(h)  # (B,T,E)
+            mix = blk.mixer(n1)  # (B,T,E)
 
-            n1_last = n1[:, -1, :] # (B,E)
-            _, block_state = blk.mixer.step(n1_last, None) # (B,M,E)
+            n1_last = n1[:, -1, :]  # (B,E)
+            _, block_state = blk.mixer.step(n1_last, None)  # (B,M,E)
             states.append(block_state)
 
             h = h + mix
             n2 = blk.norm2(h)
             h = h + blk.mlp(n2)
 
-        h_last = h[:, -1, :] # (B,E)
+        h_last = h[:, -1, :]  # (B,E)
         h = self.norm(h)
-        logits = self.out_emb(h) # (B,T,V)
+        logits = self.out_emb(h)  # (B,T,V)
         return logits, states, h_last
 
     # -------- Greedy generation with O(1) updates -------- #
@@ -253,25 +264,24 @@ class EMAMixerModel(nn.Module):
 
         # For consistency with other models, crop to context window if needed
         if x.size(1) > self.config.block_size:
-            x = x[:, -self.config.block_size:]
+            x = x[:, -self.config.block_size :]
 
         logits, states, _ = self._prefill(x)
-        B = x.size(0)
 
         for _ in range(max_tokens):
-            next_id = logits[:, -1, :].argmax(dim=-1)     # (B,)
+            next_id = logits[:, -1, :].argmax(dim=-1)  # (B,)
             x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
 
             # One-step through blocks with cached states
-            h_t = self.inp_emb(next_id)                   # (B,E)
+            h_t = self.inp_emb(next_id)  # (B,E)
             new_states = []
             for blk, state in zip(self.blocks, states):
-                h_t, state = blk.step(h_t, state)         # (B,E), (B,M,E)
+                h_t, state = blk.step(h_t, state)  # (B,E), (B,M,E)
                 new_states.append(state)
             states = new_states
 
             h_t = self.norm(h_t)
-            logits_t = self.out_emb(h_t).unsqueeze(1)     # (B,1,V)
+            logits_t = self.out_emb(h_t).unsqueeze(1)  # (B,1,V)
             logits = torch.cat([logits, logits_t], dim=1)
 
         return x

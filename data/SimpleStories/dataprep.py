@@ -10,6 +10,7 @@ from transformers.utils import logging
 
 logging.set_verbosity(40)
 
+
 def memmap_write(
     fname: Path,
     arr: List,
@@ -34,7 +35,7 @@ def prepare_and_tokenize_dataset(
     dset_name = "SimpleStories/SimpleStories"
     train_ds = load_dataset(dset_name, split="train")
     test_ds = load_dataset(dset_name, split="test")
-    
+
     print("Dataset columns:", train_ds.column_names)
 
     # --------------------------------------------------------- #
@@ -87,10 +88,7 @@ def write_datasets_and_metadata(
         out_path = out_dir / f"{split}.bin"
 
         # write tokens
-        memmap_write(
-            out_path,
-            subset["ids"]
-        )
+        memmap_write(out_path, subset["ids"])
 
         # ---------- per‑split statistics ----------
         total_tokens = int(np.sum(subset["len"]))
@@ -119,9 +117,11 @@ def write_datasets_and_metadata(
     with open(out_dir / "metadata.json", "w") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
+
 # --------------------------------------------------------------------------- #
 # main preparation sequence                                                   #
 # --------------------------------------------------------------------------- #
+
 
 def run(out_dir: Path, num_proc: int, max_length: int) -> None:
 
@@ -153,7 +153,9 @@ if __name__ == "__main__":
 
     cur_dir = Path(__file__).parent
     ap = argparse.ArgumentParser("Prepare simple stories")
-    ap.add_argument("--out_dir", default=cur_dir / "data", help="directory to write .bin files")
+    ap.add_argument(
+        "--out_dir", default=cur_dir / "data", help="directory to write .bin files"
+    )
     ap.add_argument("--num_proc", type=int, default=19)
     ap.add_argument("--max_length", type=int, default=256)
     args = ap.parse_args()

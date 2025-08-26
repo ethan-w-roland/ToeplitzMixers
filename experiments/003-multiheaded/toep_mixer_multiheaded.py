@@ -1,40 +1,36 @@
-import os
 import torch
 import torch.nn as nn
-import einops
 from einops import rearrange
 import transformers
-from transformers import TextDataset, Trainer, TrainingArguments, AutoModelWithLMHead, DataCollatorForLanguageModeling
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer
 import datasets
-from datasets import load_dataset, load_from_disk
-import sentencepiece
-from safetensors import safe_open
-from safetensors.torch import save_file
+from datasets import load_from_disk
 import mlflow
 
-#define a MLP Mixer based causal-language-model using weight masking
+# define a MLP Mixer based causal-language-model using weight masking
+
 
 class ToeplitzCausalLinear(nn.Module):
     """
     A linear layer with a triangular (causal) mask applied to the weight matrix.
     This ensures each position i cannot use info from positions > i.
     """
+
     def __init__(self, dim: int):
-        
+
         super().__init__()
 
         # Standard weight + bias
         self.weight = nn.Parameter(torch.randn(1, dim))
         self.bias = nn.Parameter(torch.zeros(dim))
 
-    def vector_to_matrix(self, v):
+    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
         """
         Given a vector v of shape (m,), returns an (m x m) matrix M
         where M[i, j] = v[j - i] if j >= i, and 0 otherwise.
-        
+
         For example, if v = [a, b, c, d] then M will be:
-        
+
         [ a  b  c  d ]
         [ 0  a  b  c ]
         [ 0  0  a  b ]
@@ -43,81 +39,95 @@ class ToeplitzCausalLinear(nn.Module):
         v = v.reshape(-1)  # Ensure v is a 1D tensor
         m = v.shape[0]
         # Create index grids for rows and columns
-        i, j = torch.meshgrid(torch.arange(m, device=v.device),
-                                torch.arange(m, device=v.device), 
-                                indexing='ij')
+        i, j = torch.meshgrid(
+            torch.arange(m, device=v.device),
+            torch.arange(m, device=v.device),
+            indexing="ij",
+        )
         # j - i gives the offset into v. When j < i, we want a 0.
-        M = torch.where(j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype))
+        M = torch.where(
+            j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
+        )
         return M
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x shape: (batch, embed_dim, seq_len)
         """
         B, E, S = x.shape
         W = self.vector_to_matrix(self.weight)
         x_reshaped = x.reshape(B * E, S)  # (B*E, S)
-        out = x_reshaped @ W           # (B*E, S)
-        out = out + self.bias          # broadcast bias
-        out = out.view(B, E, S)        # reshape back
+        out = x_reshaped @ W  # (B*E, S)
+        out = out + self.bias  # broadcast bias
+        out = out.view(B, E, S)  # reshape back
         return out
 
 
 class ToeplitzHeads(nn.Module):
 
-    def __init__(self, dim, seq_len, hidden_dim, n_heads, expanded_convs=False, dropout=0.1):
+    def __init__(
+        self,
+        dim: int,
+        seq_len: int,
+        hidden_dim: int,
+        n_heads: int,
+        expanded_convs: bool = False,
+        dropout: float = 0.1,
+    ):
         super().__init__()
         self.n_heads = n_heads
         self.proj_head = nn.ModuleList(
-            [nn.Linear(dim, hidden_dim)
-            for i in range(n_heads)]
-            ).to(device)
+            [nn.Linear(dim, hidden_dim) for i in range(n_heads)]
+        ).to(device)
 
         self.out_proj = nn.Linear(dim, dim)
 
         if expanded_convs:
             self.mixer_heads = nn.ModuleList(
-                [nn.Sequential(
-                ToeplitzCausalLinear(seq_len),
-                nn.SiLU(),
-                nn.Dropout(dropout),
-                ToeplitzCausalLinear(seq_len))
-            for i in range(n_heads)]
+                [
+                    nn.Sequential(
+                        ToeplitzCausalLinear(seq_len),
+                        nn.SiLU(),
+                        nn.Dropout(dropout),
+                        ToeplitzCausalLinear(seq_len),
+                    )
+                    for i in range(n_heads)
+                ]
             )
         else:
             self.mixer_heads = nn.ModuleList(
-                [ToeplitzCausalLinear(seq_len)
-                for i in range(n_heads)]
-                )
+                [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+            )
 
-    def forward(self, x: torch.tensor):
-        hidden_layer = []
-        x = rearrange(x, 'b e t -> b t e')
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        activations = []
+        x = rearrange(x, "b e t -> b t e")
         # pre-concatenated out projection
         for head in range(self.n_heads):
             projection = self.proj_head[head](x)
-            projection = rearrange(projection, 'b t e -> b e t')
+            projection = rearrange(projection, "b t e -> b e t")
             conv_projection = self.mixer_heads[head](projection)
-            rearranged_conv = rearrange(conv_projection, 'b e t -> b t e')
-            hidden_layer.append(rearranged_conv)
+            rearranged_conv = rearrange(conv_projection, "b e t -> b t e")
+            activations.append(rearranged_conv)
 
         # concatenate and project multi-headed output
-        hidden_layer = torch.cat(hidden_layer, dim=2)
+        hidden_layer = torch.cat(activations, dim=2)
         hidden_layer = self.out_proj(hidden_layer)
-        hidden_layer = rearrange(hidden_layer, 'b t e -> b e t')
+        hidden_layer = rearrange(hidden_layer, "b t e -> b e t")
         return hidden_layer
 
 
 class MixerBlock(nn.Module):
-    
+
     def __init__(
         self,
-        hidden_dim:int,
-        seq_len:int,
-        expansion_factor:int=2,
-        dropout:float=0.1,
+        hidden_dim: int,
+        seq_len: int,
+        expansion_factor: int = 2,
+        dropout: float = 0.1,
         heads=None,
-        expanded_convs=False):
+        expanded_convs=False,
+    ):
 
         super(MixerBlock, self).__init__()
 
@@ -125,39 +135,44 @@ class MixerBlock(nn.Module):
         self.seq_len = seq_len
         self.expansion_factor = expansion_factor
 
-        #channel-norm
+        # channel-norm
         self.channel_norm = nn.LayerNorm(hidden_dim)
 
-        #channel-mixing layer
+        # channel-mixing layer
         self.channel_mixing_layer = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * expansion_factor),
             nn.SiLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * expansion_factor, hidden_dim)
+            nn.Linear(hidden_dim * expansion_factor, hidden_dim),
         )
 
-        #token-norm
+        # token-norm
         self.token_norm = nn.LayerNorm(hidden_dim)
         if heads:
-            self.token_mixing_layer = ToeplitzHeads(hidden_dim, 
-                seq_len, 
-                hidden_dim//heads,
-                heads, 
-                expanded_convs=expanded_convs)
+            self.token_mixing_layer = ToeplitzHeads(
+                hidden_dim,
+                seq_len,
+                hidden_dim // heads,
+                heads,
+                expanded_convs=expanded_convs,
+            )  # type: ignore[assignment]
+
         else:
+
             if expanded_convs:
-                #token-mixing layer
+                # token-mixing layer
                 self.token_mixing_layer = nn.Sequential(
                     ToeplitzCausalLinear(seq_len),
                     nn.SiLU(),
                     nn.Dropout(dropout),
-                    ToeplitzCausalLinear(seq_len)
-                )
+                    ToeplitzCausalLinear(seq_len),
+                )  # type: ignore[assignment]
+
             else:
                 # flat mixer layer
-                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)
+                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
         x = self.channel_norm(x)
         x = self.channel_mixing_layer(x)
@@ -171,17 +186,19 @@ class MixerBlock(nn.Module):
         x = x + res
         return x
 
+
 class MLPMixer(nn.Module):
-    
+
     def __init__(
         self,
-        vocab_size:int,
-        hidden_dim:int,
-        seq_len:int,
-        num_blocks:int,
+        vocab_size: int,
+        hidden_dim: int,
+        seq_len: int,
+        num_blocks: int,
         heads=None,
         expanded_convs=False,
-        tie_io=False):
+        tie_io=False,
+    ):
 
         super(MLPMixer, self).__init__()
 
@@ -195,7 +212,12 @@ class MLPMixer(nn.Module):
 
         # Mixer Blocks
         self.mixer_blocks = nn.ModuleList(
-            [MixerBlock(hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs) for _ in range(num_blocks)]
+            [
+                MixerBlock(
+                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs
+                )
+                for _ in range(num_blocks)
+            ]
         )
 
         # Output Layer
@@ -231,10 +253,10 @@ class MLPMixer(nn.Module):
         logits = self.output_layer(x)
         logits = logits[:, :-1].contiguous()
 
-        if not labels is None:
+        if labels is not None:
             logits = logits.view(-1, self.vocab_size)
             labels = labels.view(-1)
-            
+
             loss = self.loss_fn(logits, labels)
             return loss, logits
 
@@ -242,28 +264,30 @@ class MLPMixer(nn.Module):
             return logits
 
 
-tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
+tokenizer = AutoTokenizer.from_pretrained("../../data/FineWeb/tokenizer")
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
-print ('Vocab size: ', n_vocab)
+print("Vocab size: ", n_vocab)
 
 tokenized_length = 512
 dim = 512
 layers = 16
 n_heads = 4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = MLPMixer(n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=True).float()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = MLPMixer(
+    n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=True
+).float()
 
-train_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
-test_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
+train_path = "../../data/FineWeb/train"
+test_path = "../../data/FineWeb/test"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 train_dataset = load_from_disk(train_path, keep_in_memory=None)
 test_dataset = load_from_disk(test_path, keep_in_memory=None)
-print (len(train_dataset), len(test_dataset))
+print(len(train_dataset), len(test_dataset))
 mlflow.end_run()
-print ('training begun')
-print (model)
+print("training begun")
+print(model)
 training_arguments = transformers.TrainingArguments(
     num_train_epochs=2,
     per_device_train_batch_size=64,
@@ -273,16 +297,16 @@ training_arguments = transformers.TrainingArguments(
     save_steps=8000,
     learning_rate=5e-4,
     fp16=True,
-    evaluation_strategy='steps',
-    output_dir='~/Desktop/fineweb_expanded_h4_toep_512_n16_c512_b64',
-    optim='adamw_torch',
+    eval_strategy="steps",
+    output_dir="./results",
+    optim="adamw_torch",
     overwrite_output_dir=True,
     save_safetensors=True,
-    max_steps=200000
+    max_steps=200000,
 )
 
 trainer = transformers.Trainer(
-    model=model.to('cuda'), # pre-assignment for FSDP initialization
+    model=model.to("cuda"),  # pre-assignment for FSDP initialization
     train_dataset=train_dataset,
     eval_dataset=test_dataset,
     args=training_arguments,
@@ -291,18 +315,3 @@ trainer = transformers.Trainer(
 
 model.train()
 trainer.train()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

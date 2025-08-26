@@ -13,7 +13,7 @@ torch.set_float32_matmul_precision("medium")
 
 @dataclass
 class Config:
-    vocab_size: int = 4096 #tiny bc simple stories tokenizer
+    vocab_size: int = 4096  # tiny bc simple stories tokenizer
     block_size: int = 512
     embed_dim: int = 512
     mlp_dim: int = 512 * 4
@@ -24,7 +24,7 @@ class Toeplitz(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.weight = nn.Parameter(torch.zeros(config.block_size))
-        self.bias   = nn.Parameter(torch.zeros(config.block_size))
+        self.bias = nn.Parameter(torch.zeros(config.block_size))
 
     def vector_to_matrix(self, v: torch.Tensor, seq_len: int) -> torch.Tensor:
         T = min(seq_len, v.numel())
@@ -34,23 +34,23 @@ class Toeplitz(nn.Module):
         return M
 
     def forward(self, x: torch.Tensor):
-        x = x.transpose(1, 2) # (B, E, T)
+        x = x.transpose(1, 2)  # (B, E, T)
         B, E, T = x.shape
-        W = self.vector_to_matrix(self.weight, T).to(x.dtype) # (T, T)
+        W = self.vector_to_matrix(self.weight, T).to(x.dtype)  # (T, T)
         out = (x.reshape(B * E, T) @ W).view(B, E, T)
         out = out + self.bias[:T].view(1, 1, T)
-        return out.transpose(1, 2) # (B, T, E)
+        return out.transpose(1, 2)  # (B, T, E)
 
     @torch.inference_mode()
     def step(
         self,
-        n1_t: torch.Tensor, # (B, E) normalized new feature
-        hist: torch.Tensor | None, # (B, E, Tprev) or None
+        n1_t: torch.Tensor,  # (B, E) normalized new feature
+        hist: torch.Tensor | None,  # (B, E, Tprev) or None
         max_len: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
         if hist is None:
-            hist = n1_t.unsqueeze(-1)                       # (B,E,1)
+            hist = n1_t.unsqueeze(-1)  # (B,E,1)
         else:
             hist = torch.cat([hist, n1_t.unsqueeze(-1)], dim=-1)  # (B,E,Tprev+1)
 
@@ -58,11 +58,11 @@ class Toeplitz(nn.Module):
             hist = hist[:, :, -max_len:].contiguous()
 
         T = hist.size(-1)
-        w = self.weight[:T] # (T,)
+        w = self.weight[:T]  # (T,)
         y_t = torch.einsum("bet,t->be", hist, torch.flip(w, dims=[0]))
-        y_t = y_t + self.bias[T - 1] # scalar bias for current time
+        y_t = y_t + self.bias[T - 1]  # scalar bias for current time
         return y_t, hist
-        
+
 
 class MLP(nn.Module):
     def __init__(self, config: Config):
@@ -76,6 +76,7 @@ class MLP(nn.Module):
         x = self.act(x)
         x = self.fc2(x)
         return x
+
 
 class Block(nn.Module):
     def __init__(self, config: Config):
@@ -104,10 +105,10 @@ class ToeplitzMixerModel(nn.Module):
         num_params = sum(p.numel() for p in self.parameters())
         print(f"Number of parameters: {num_params}")
 
-    def _init_weights(self, module): 
+    def _init_weights(self, module):
         if isinstance(module, nn.Linear) or isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
-        if hasattr(module, 'bias') and module.bias is not None:
+        if hasattr(module, "bias") and module.bias is not None:
             nn.init.zeros_(module.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -130,9 +131,9 @@ class ToeplitzMixerModel(nn.Module):
 
         with torch.inference_mode():
             for _ in range(max_tokens):
-                x_cond = x[:, -block_size:]                  # crop to context
-                logits = self.forward(x_cond)                # (B, Tc, V)
-                next_id = logits[:, -1, :].argmax(dim=-1)    # (B,)
+                x_cond = x[:, -block_size:]  # crop to context
+                logits = self.forward(x_cond)  # (B, Tc, V)
+                next_id = logits[:, -1, :].argmax(dim=-1)  # (B,)
                 x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
 
         return x
@@ -152,30 +153,32 @@ class ToeplitzMixerModel(nn.Module):
 
         # run one forward pass, building per-block histories of norm1(x)
         caches = []
-        h = self.inp_emb(x)                                    # (B,T,E)
+        h = self.inp_emb(x)  # (B,T,E)
         for blk in self.blocks:
-            n1 = blk.norm1(h)                                  # (B,T,E)
-            hist = n1.transpose(1, 2).contiguous()             # (B,E,T)
+            n1 = blk.norm1(h)  # (B,T,E)
+            hist = n1.transpose(1, 2).contiguous()  # (B,E,T)
             caches.append(hist)
-            mix_full = blk.mixer(n1)                           # (B,T,E)
+            mix_full = blk.mixer(n1)  # (B,T,E)
             h = h + mix_full
             n2 = blk.norm2(h)
             h = h + blk.mlp(n2)
 
         h = self.norm(h)
-        logits = self.out_emb(h)                               # (B,T,V)
+        logits = self.out_emb(h)  # (B,T,V)
 
         # ---- DECODE ----
         for _ in range(max_tokens):
-            next_ids = logits[:, -1, :].argmax(dim=-1)         # (B,)
+            next_ids = logits[:, -1, :].argmax(dim=-1)  # (B,)
             x = torch.cat([x, next_ids.unsqueeze(1)], dim=1)
 
             # single-step through blocks using step()
-            h_t = self.inp_emb(next_ids)                       # (B,E)
+            h_t = self.inp_emb(next_ids)  # (B,E)
             new_caches = []
             for blk, cache in zip(self.blocks, caches):
-                n1_t = blk.norm1(h_t)                          # (B,E)
-                y_t, new_hist = blk.mixer.step(n1_t, cache, block_size)  # (B,E), (B,E,T)
+                n1_t = blk.norm1(h_t)  # (B,E)
+                y_t, new_hist = blk.mixer.step(
+                    n1_t, cache, block_size
+                )  # (B,E), (B,E,T)
                 h_t = h_t + y_t
                 n2_t = blk.norm2(h_t)
                 h_t = h_t + blk.mlp(n2_t)
@@ -183,8 +186,7 @@ class ToeplitzMixerModel(nn.Module):
             caches = new_caches
 
             h_t = self.norm(h_t)
-            logits_t = self.out_emb(h_t).unsqueeze(1)          # (B,1,V)
+            logits_t = self.out_emb(h_t).unsqueeze(1)  # (B,1,V)
             logits = torch.cat([logits, logits_t], dim=1)
 
         return x
-

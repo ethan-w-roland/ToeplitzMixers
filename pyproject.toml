@@ -5,9 +5,15 @@ description = "Toeplitz MLP Mixers Experiments"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "black==24.10.0",
     "datasets>=4.0.0",
     "jupyter>=1.1.1",
+    "mlflow>=3.3.1",
+    "mypy==1.14.1",
+    "nbqa==1.9.1",
+    "pre-commit==4.1.0",
     "python-dotenv>=1.1.1",
+    "ruff==0.9.3",
     "torch>=2.7.1",
     "transformers>=4.53.1",
     "triton>=3.3.1",

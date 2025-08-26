@@ -13,25 +13,25 @@ from torch.utils.data.distributed import DistributedSampler
 
 class TokenDataset(Dataset):
     """PyTorch Dataset for memory-mapped token files."""
-    
+
     def __init__(self, filename: str, T: int):
         self.filename = filename
         self.T = T
-        
+
         # Load tokens as memory map
-        self.tokens = np.memmap(filename, dtype=np.uint16, mode='r')
+        self.tokens = np.memmap(filename, dtype=np.uint16, mode="r")
         self.num_tokens = len(self.tokens)
-        
+
         # The number of sequences that can be formed
         self.num_sequences = (self.num_tokens - 1) // self.T
 
     def __len__(self):
         return self.num_sequences
-    
+
     def __getitem__(self, idx: int) -> torch.Tensor:
         # Get sequence of T+1 tokens
         buf = self.tokens[idx * self.T : (idx + 1) * self.T + 1]
-        
+
         # Convert to tensor
         return torch.from_numpy(buf.astype(np.int64))
 
@@ -51,19 +51,20 @@ class DataLoader:
         pin_memory: bool = True,
         persistent_workers: bool = True,
     ):
+
         self.B = B
         self.T = T
         self.device = device
         self.dataset = TokenDataset(filename, T)
-        
-        self.sampler = DistributedSampler(
+
+        self.sampler: DistributedSampler = DistributedSampler(
             self.dataset,
             num_replicas=num_processes,
             rank=process_rank,
             shuffle=True,
         )
-        
-        self.dataloader = TorchDataLoader(
+
+        self.dataloader: TorchDataLoader = TorchDataLoader(
             self.dataset,
             batch_size=B,
             sampler=self.sampler,
@@ -84,7 +85,7 @@ class DataLoader:
         except StopIteration:
             self.reset()
             batch = next(self.iterator)
-        
+
         if self.device is not None:
             batch = batch.to(self.device, non_blocking=True)
         return batch
