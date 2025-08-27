@@ -154,10 +154,10 @@ if __name__ == "__main__":
     cur_dir = Path(__file__).parent
     ap = argparse.ArgumentParser("Prepare simple stories")
     ap.add_argument(
-        "--out_dir", default=cur_dir / "data", help="directory to write .bin files"
+        "--out_dir", default=cur_dir, help="directory to write .bin files"
     )
     ap.add_argument("--num_proc", type=int, default=19)
-    ap.add_argument("--max_length", type=int, default=256)
+    ap.add_argument("--max_length", type=int, default=512)
     args = ap.parse_args()
 
     run(
