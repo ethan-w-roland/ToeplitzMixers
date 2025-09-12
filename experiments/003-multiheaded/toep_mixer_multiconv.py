@@ -18,13 +18,14 @@ class ToeplitzCausalLinear(nn.Module):
     This ensures each position i cannot use info from positions > i.
     """
 
-    def __init__(self, dim: int):
+    def __init__(self, dim: int, kernel: int):
 
         super().__init__()
 
         # Standard weight + bias
-        self.weight = nn.Parameter(torch.randn(1, dim))
+        self.weight = nn.Parameter(torch.randn(kernel, dim))
         self.bias = nn.Parameter(torch.zeros(dim))
+        self.kernel = kernel
 
     def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
         """
@@ -63,7 +64,6 @@ class ToeplitzCausalLinear(nn.Module):
         out = out + self.bias  # broadcast bias
         out = out.view(B, E, S)  # reshape back
         return out
-
 
 class ToeplitzHeads(nn.Module):
 
