@@ -1,0 +1,15 @@
+artifact_uri: file:///home/bbadger/experiments/ToeplitzMixers/experiments/006-multikernel/mlruns/0/023633a11e484637b00391569b5388b3/artifacts
+end_time: 1757736416448
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 023633a11e484637b00391569b5388b3
+run_name: /home/bbadger/Desktop/fineweb_toep_mixer_k4_1024_n16_c512
+run_uuid: 023633a11e484637b00391569b5388b3
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1757736414433
+status: 3
+tags: []
+user_id: bbadger
