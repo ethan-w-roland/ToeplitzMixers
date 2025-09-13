@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # define a MLP Mixer based causal-language-model using weight masking
 
 
-class ToeplitzCausalLinear(nn.Module):
+class KernelToeplitzCausalLinear(nn.Module):
     """
     A linear layer with a triangular (causal) mask applied to the weight matrix.
     This ensures each position i cannot use info from positions > i.
@@ -27,20 +27,31 @@ class ToeplitzCausalLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(dim))
         self.kernel = kernel
 
-    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
+    def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
         """
-        Given a vector v of shape (m,), returns an (m x m) matrix M
-        where M[i, j] = v[j - i] if j >= i, and 0 otherwise.
+        Given a matrix v of shape (k, m) and convolutional kernel k >= 0, 
+        returns an (k x m x m) matrix M where M[i, j] = v[j - i] if 
+        j >= i, and 0 otherwise.
 
-        For example, if v = [a, b, c, d] then M will be:
+        For example, if v = [[a, b, c, d], [e, f, g, h]], k=2 then M will be:
 
-        [ a  b  c  d ]
-        [ 0  a  b  c ]
-        [ 0  0  a  b ]
-        [ 0  0  0  a ]
+        [[
+            [ a  b  c  d ]
+            [ 0  a  b  c ]
+            [ 0  0  a  b ]
+            [ 0  0  0  a ]
+        ],
+        [
+            [ e  f  g  h ]
+            [ 0  e  f  g ]
+            [ 0  0  e  f ]
+            [ 0  0  0  e ]
+        ]]
+
         """
-        v = v.reshape(-1)  # Ensure v is a 1D tensor
-        m = v.shape[0]
+        # Expects v is a preformed tensor with shape [k, D]
+        m = v.shape[-1] # vector shape
+
         # Create index grids for rows and columns
         i, j = torch.meshgrid(
             torch.arange(m, device=v.device),
@@ -49,7 +60,7 @@ class ToeplitzCausalLinear(nn.Module):
         )
         # j - i gives the offset into v. When j < i, we want a 0.
         M = torch.where(
-            j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
+            j >= i, v[..., j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
         )
         return M
 
@@ -57,13 +68,22 @@ class ToeplitzCausalLinear(nn.Module):
         """
         x shape: (batch, embed_dim, seq_len)
         """
+        p = self.kernel-1 # pad value
         B, E, S = x.shape
-        W = self.vector_to_matrix(self.weight)
-        x_reshaped = x.reshape(B * E, S)  # (B*E, S)
-        out = x_reshaped @ W  # (B*E, S)
-        out = out + self.bias  # broadcast bias
-        out = out.view(B, E, S)  # reshape back
-        return out
+        W = vector_to_matrix(weight, k)
+        # apply pad for k>1 convolution
+        padded_x = torch.nn.functional.pad(input=x, pad=(0, 0, p, p), mode='constant', value=0)
+        padded_e = padded_x.shape[1]
+        accumulated_output = torch.zeros(x.shape)
+        
+        for k in range(self.kernel):
+            end_index = E + k + p
+            offset = p - k # indices to ignore due to padding
+            out = padded_x[:, k:end_index] @ W[k]  # [B, padded_e, S] @ [S, S] -> [B, padded_e, S]
+            accumulated_output += out[:, offset:E + offset]
+
+        accumulated_output += bias
+        return accumulated_output
 
 class ToeplitzHeads(nn.Module):
 
@@ -88,17 +108,17 @@ class ToeplitzHeads(nn.Module):
             self.mixer_heads = nn.ModuleList(
                 [
                     nn.Sequential(
-                        ToeplitzCausalLinear(seq_len),
+                        KernelToeplitzCausalLinear(seq_len),
                         nn.SiLU(),
                         nn.Dropout(dropout),
-                        ToeplitzCausalLinear(seq_len),
+                        KernelToeplitzCausalLinear(seq_len),
                     )
                     for i in range(n_heads)
                 ]
             )
         else:
             self.mixer_heads = nn.ModuleList(
-                [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                [KernelToeplitzCausalLinear(seq_len) for i in range(n_heads)]
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -130,7 +150,6 @@ class MixerBlock(nn.Module):
         heads=None,
         expanded_convs=False,
     ):
-
         super(MixerBlock, self).__init__()
 
         self.hidden_dim = hidden_dim
@@ -160,19 +179,18 @@ class MixerBlock(nn.Module):
             )  # type: ignore[assignment]
 
         else:
-
             if expanded_convs:
                 # token-mixing layer
                 self.token_mixing_layer = nn.Sequential(
-                    ToeplitzCausalLinear(seq_len),
+                    KernelToeplitzCausalLinear(seq_len),
                     nn.SiLU(),
                     nn.Dropout(dropout),
-                    ToeplitzCausalLinear(seq_len),
+                    KernelToeplitzCausalLinear(seq_len),
                 )  # type: ignore[assignment]
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+                self.token_mixing_layer = KernelToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
