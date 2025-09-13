@@ -27,7 +27,7 @@ class KernelToeplitzCausalLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(dim))
         self.kernel = kernel
 
-    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
+    def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
         """
         Given a matrix v of shape (k, m) and convolutional kernel k >= 0, 
         returns an (k x m x m) matrix M where M[i, j] = v[j - i] if 
@@ -70,11 +70,11 @@ class KernelToeplitzCausalLinear(nn.Module):
         """
         p = self.kernel-1 # pad value
         B, E, S = x.shape
-        W = self.vector_to_matrix(self.weight)
+        W = vector_to_matrix(weight, k)
         # apply pad for k>1 convolution
         padded_x = torch.nn.functional.pad(input=x, pad=(0, 0, p, p), mode='constant', value=0)
         padded_e = padded_x.shape[1]
-        accumulated_output = torch.zeros(x.shape).to(device)
+        accumulated_output = torch.zeros(x.shape)
         
         for k in range(self.kernel):
             end_index = E + k + p
@@ -82,7 +82,7 @@ class KernelToeplitzCausalLinear(nn.Module):
             out = padded_x[:, k:end_index] @ W[k]  # [B, padded_e, S] @ [S, S] -> [B, padded_e, S]
             accumulated_output += out[:, offset:E + offset]
 
-        accumulated_output += self.bias
+        accumulated_output += bias
         return accumulated_output
 
 class ToeplitzHeads(nn.Module):
@@ -145,10 +145,9 @@ class MixerBlock(nn.Module):
         self,
         hidden_dim: int,
         seq_len: int,
-        expansion_factor: int = 4,
-        dropout: float = 0.,
+        expansion_factor: int = 2,
+        dropout: float = 0.1,
         heads=None,
-	kernel=1,
         expanded_convs=False,
     ):
         super(MixerBlock, self).__init__()
@@ -186,12 +185,12 @@ class MixerBlock(nn.Module):
                     KernelToeplitzCausalLinear(seq_len),
                     nn.SiLU(),
                     nn.Dropout(dropout),
-                    KernelToeplitzCausalLinear(seq_len, kernel),
+                    KernelToeplitzCausalLinear(seq_len),
                 )  # type: ignore[assignment]
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = KernelToeplitzCausalLinear(seq_len, kernel)  # type: ignore[assignment]
+                self.token_mixing_layer = KernelToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -217,8 +216,7 @@ class MLPMixer(nn.Module):
         seq_len: int,
         num_blocks: int,
         heads=None,
-        kernel=1,
-	expanded_convs=False,
+        expanded_convs=False,
         tie_io=False,
     ):
 
@@ -236,7 +234,7 @@ class MLPMixer(nn.Module):
         self.mixer_blocks = nn.ModuleList(
             [
                 MixerBlock(
-                    hidden_dim, seq_len, heads=heads, kernel=kernel, expanded_convs=expanded_convs
+                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs
                 )
                 for _ in range(num_blocks)
             ]
@@ -258,7 +256,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, KernelToeplitzCausalLinear):
+            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -290,7 +288,7 @@ checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenize_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 print("Vocab size: ", n_vocab)
@@ -298,11 +296,10 @@ print("Vocab size: ", n_vocab)
 tokenized_length = 512
 dim = 1024
 layers = 16
-n_heads = None
-kernel=4
+n_heads = 4
 
 model = MLPMixer(
-    n_vocab, dim, tokenized_length, layers, heads=n_heads, kernel=kernel, expanded_convs=False
+    n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 ).float()
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
@@ -325,7 +322,7 @@ training_arguments = transformers.TrainingArguments(
     learning_rate=5e-4,
     fp16=True,
     eval_strategy="steps",
-    output_dir=f"{checkpoint_root}/fineweb_toep_mixer_k4_1024_n16_c512",
+    output_dir=f"{checkpoint_root}/",
     optim="adamw_torch",
     overwrite_output_dir=True,
     save_safetensors=True,
