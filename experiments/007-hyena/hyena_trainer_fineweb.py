@@ -10,7 +10,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from dotenv import load_dotenv
 
+import os
+import shutil
+from prettytable import PrettyTable
+import torch
+from einops import rearrange
+import transformers
+from transformers import AutoTokenizer
+import torch.nn as nn
+import mlflow
+import datasets
+from datasets import load_dataset, load_from_disk
+import safetensors
 
 def fftconv(u, k, D):
     seqlen = u.shape[-1]
@@ -183,7 +196,7 @@ class HyenaFilter(OptimModule):
         return y
     
     
-class HyenaOperator(nn.Module):
+class HyenaOperator(torch.nn.Module):
     def __init__(
             self,
             d_model,
@@ -251,7 +264,7 @@ class HyenaOperator(nn.Module):
         y = self.out_proj(y)
         return y
 
-def HyenaModel(nn.Module):
+class HyenaModel(nn.Module):
 
     def __init__(self, n_vocab, dim, depth, length):
         super().__init__()
@@ -266,8 +279,6 @@ def HyenaModel(nn.Module):
             for i in range(depth)]
             )
         self.lm_head = nn.Linear(dim, n_vocab, bias=False)
-        if tie_weights:
-            self.wte.weight = self.lm_head.weight
         self.cel = nn.CrossEntropyLoss()
 
     def forward(self, input_ids, labels=None, **kwargs):
@@ -299,10 +310,10 @@ if __name__ == "__main__":
     tokenized_length = 512
     dim = 1024
     layers = 16
-    model = HyenaMixer(n_vocab, dim, tokenized_length, layers)
+    model = HyenaModel(n_vocab, dim, layers, tokenized_length)
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -313,15 +324,15 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=32,
-        per_device_eval_batch_size=32,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
         learning_rate=5e-4,
         fp16=True,
         eval_strategy="steps",
-        output_dir=f"{checkpoint_root}/hyena_1024_n16",
+        output_dir=f"{checkpoint_root}/hyena_1024_n16_b64x2",
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=True,
