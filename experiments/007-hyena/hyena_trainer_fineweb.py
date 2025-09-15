@@ -264,17 +264,48 @@ class HyenaOperator(torch.nn.Module):
         y = self.out_proj(y)
         return y
 
+class HyenaModule(nn.Module):
+
+
+    def __init__(self, dim, length, **kwargs):
+        super().__init__()
+        self.patch_layernorm = nn.LayerNorm(dim)
+        self.seq_layernorm = nn.LayerNorm(dim)
+        self.dim = dim
+        self.length = length
+        self.patch_ff = FeedForward(dim)
+        self.hyena = HyenaOperator(
+            d_model=dim, 
+            l_max=length, 
+            order=2, 
+            filter_order=64
+            )
+
+
+    def forward(self, x: torch.tensor):
+        if x.dim() > 3:
+            x = rearrange(x, 'b p t f -> (b p) t f')
+
+        residual = x
+        x = self.seq_layernorm(x)
+        x = self.hyena(x)
+        x += residual
+
+        residual = x
+        x = self.patch_layernorm(x)
+        x = self.patch_ff(x) + residual
+        return x
+
+
 class HyenaModel(nn.Module):
 
     def __init__(self, n_vocab, dim, depth, length):
         super().__init__()
         self.wte = nn.Embedding(n_vocab, dim)
         self.mixerblocks = nn.ModuleList(
-            [HyenaOperator(
-                d_model=dim, 
-                l_max=length, 
-                order=2, 
-                filter_order=64
+            [HyenaModule(
+                dim, 
+                length, 
                 )
             for i in range(depth)]
             )
