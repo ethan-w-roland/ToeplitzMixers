@@ -309,7 +309,7 @@ if __name__ == "__main__":
 
     tokenized_length = 512
     dim = 1024
-    layers = 16
+    layers = 4
     model = HyenaModel(n_vocab, dim, layers, tokenized_length)
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
@@ -329,7 +329,7 @@ if __name__ == "__main__":
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
-        learning_rate=5e-4,
+        learning_rate=1e-4,
         fp16=True,
         eval_strategy="steps",
         output_dir=f"{checkpoint_root}/hyena_1024_n16_b64x2",
