@@ -65,6 +65,19 @@ class KernelToeplitzCausalLinear(nn.Module):
         return M
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.to(device)
+        p = self.kernel-1 # pad value
+        B, E, S = x.shape
+        W = self.vector_to_matrix(self.weight)
+        # apply pad for k>1 convolution
+        padded_x = torch.nn.functional.pad(input=x, pad=(0, 0, p, p), mode='constant', value=0)
+        padded_e = padded_x.shape[1]
+        processed_x = torch.stack([padded_x[:, i:E + i] for i in range(self.kernel)], dim=1)
+        out = processed_x @ W
+        accumulated_output = torch.sum(out, dim=1) + self.bias
+        return accumulated_output
+
+    def _sequential_forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x shape: (batch, embed_dim, seq_len)
         """

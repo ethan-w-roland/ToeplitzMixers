@@ -43,21 +43,35 @@ def forward(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> torch.
     accumulated_output = torch.zeros(x.shape)
     
     for i in range(k):
-        print ('k=', i)
         end_index = E + i + p
         offset = p - i # indices to ignore due to padding
-        print (padded_x.shape, W[i].shape)
-        print (padded_x[:, i:end_index], padded_x[:, i:end_index].shape)
         out = padded_x[:, i:end_index] @ W[i]  # [B, padded_e, S] @ [S, S] -> [B, padded_e, S]
-        print (out.shape)
-        print (out[:, offset:E + offset])
-        accumulated_output += out[:, offset:E + offset]
+        accumulated_output += out[:, :E]
 
     accumulated_output += bias
     return accumulated_output
+
+def parallel_forward(x, weight, bias):
+    k = 4
+    p = k-1 # pad value
+    B, E, S = x.shape
+    W = vector_to_matrix(weight, k)
+    # apply pad for k>1 convolution
+    padded_x = torch.nn.functional.pad(input=x, pad=(0, 0, p, p), mode='constant', value=0)
+    padded_e = padded_x.shape[1]
+    processed_x = torch.stack([padded_x[:, i:E + i] for i in range(k)], dim=1)
+    print (processed_x.shape)
+    out = processed_x @ W
+    accumulated_output = torch.sum(out, dim=1) + bias
+
+    return accumulated_output
+
 
 weight = torch.tensor([[1,2,3,4], [2,4,6,8]]).to(torch.float)
 weight = torch.tensor([[1,2,3,4], [2,4,6,8], [3,4,5,6],[4,3,2,1]]).to(torch.float)
 bias = torch.zeros(weight[1].shape)
 x = torch.ones((1, 5, 4)).to(torch.float) # [b e t]
-forward(x, weight, bias)
+pout = parallel_forward(x, weight, bias)
+out = forward(x, weight, bias)
+print (out.shape, pout.shape)
+assert torch.allclose(pout, out)
