@@ -346,7 +346,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 512
-    dim = 1024
+    dim = 512
     layers = 16
     model = HyenaModel(n_vocab, dim, layers, tokenized_length)
 
@@ -375,7 +375,7 @@ if __name__ == "__main__":
         learning_rate=5e-4,
         fp16=True,
         eval_strategy="steps",
-        output_dir=f"{checkpoint_root}/hyena_1024_n16_b64x2",
+        output_dir=f"{checkpoint_root}/hyena_512_n16_b64x2",
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=False,
