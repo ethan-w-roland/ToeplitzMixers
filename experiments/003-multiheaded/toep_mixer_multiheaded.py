@@ -265,59 +265,60 @@ class MLPMixer(nn.Module):
         else:
             return logits
 
-load_dotenv()
-checkpoint_root = os.getenv('CHECKPOINT_ROOT')
-data_root = os.getenv('DATA_ROOT')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenize_fineweb_8k")
-tokenizer.pad_token = tokenizer.eos_token
-n_vocab = len(tokenizer)
-print("Vocab size: ", n_vocab)
+if __Name__ == "__main__":
+    load_dotenv()
+    checkpoint_root = os.getenv('CHECKPOINT_ROOT')
+    data_root = os.getenv('DATA_ROOT')
+    tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenize_fineweb_8k")
+    tokenizer.pad_token = tokenizer.eos_token
+    n_vocab = len(tokenizer)
+    print("Vocab size: ", n_vocab)
 
-tokenized_length = 512
-dim = 1024
-layers = 16
-n_heads = 4
+    tokenized_length = 512
+    dim = 1024
+    layers = 16
+    n_heads = 4
 
-model = MLPMixer(
-    n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
-).float()
+    model = MLPMixer(
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
+    ).float()
 
-train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
-datasets.config.IN_MEMORY_MAX_SIZE = 50e9
-train_dataset = load_from_disk(train_path, keep_in_memory=None)
-test_dataset = load_from_disk(test_path, keep_in_memory=None)
-print(len(train_dataset), len(test_dataset))
-mlflow.end_run()
-print("training begun")
-print(model)
-training_arguments = transformers.TrainingArguments(
-    num_train_epochs=2,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
-    warmup_steps=500,
-    eval_steps=4000,
-    save_steps=8000,
-    learning_rate=5e-4,
-    fp16=True,
-    eval_strategy="steps",
-    output_dir=f"{checkpoint_root}/",
-    optim="adamw_torch",
-    overwrite_output_dir=True,
-    save_safetensors=True,
-    max_steps=200000,
-)
+    datasets.config.IN_MEMORY_MAX_SIZE = 50e9
+    train_dataset = load_from_disk(train_path, keep_in_memory=None)
+    test_dataset = load_from_disk(test_path, keep_in_memory=None)
+    print(len(train_dataset), len(test_dataset))
+    mlflow.end_run()
+    print("training begun")
+    print(model)
+    training_arguments = transformers.TrainingArguments(
+        num_train_epochs=2,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=32,
+        warmup_steps=500,
+        eval_steps=4000,
+        save_steps=8000,
+        learning_rate=5e-4,
+        fp16=True,
+        eval_strategy="steps",
+        output_dir=f"{checkpoint_root}/",
+        optim="adamw_torch",
+        overwrite_output_dir=True,
+        save_safetensors=True,
+        max_steps=200000,
+    )
 
-trainer = transformers.Trainer(
-    model=model.to("cuda"),  # pre-assignment for FSDP initialization
-    train_dataset=train_dataset,
-    eval_dataset=test_dataset,
-    args=training_arguments,
-    data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
-)
+    trainer = transformers.Trainer(
+        model=model.to("cuda"),  # pre-assignment for FSDP initialization
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset,
+        args=training_arguments,
+        data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
+    )
 
-model.train()
-trainer.train()
+    model.train()
+    trainer.train()
