@@ -316,7 +316,7 @@ tokenized_length = 512
 dim = 1024
 layers = 16
 n_heads = None
-kernel = 4
+kernel = 8
 
 model = MLPMixer(
     n_vocab, dim, tokenized_length, layers, heads=n_heads, kernel=kernel, expanded_convs=False
@@ -334,15 +334,16 @@ print("training begun")
 print(model)
 training_arguments = transformers.TrainingArguments(
     num_train_epochs=2,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    gradient_accumulation_steps=2,
     warmup_steps=500,
     eval_steps=4000,
     save_steps=8000,
     learning_rate=5e-4,
     fp16=True,
     eval_strategy="steps",
-    output_dir=f"{checkpoint_root}/fineweb_toep_mixer_k4_1024_n16_c512",
+    output_dir=f"{checkpoint_root}/fineweb_toep_mixer_k8_1024_n16_c512",
     optim="adamw_torch",
     overwrite_output_dir=True,
     save_safetensors=True,

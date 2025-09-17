@@ -6,8 +6,12 @@ from einops import rearrange
 import transformers
 import mlflow
 from transformers import AutoTokenizer, LlamaConfig, LlamaModel
-from datasets import load_dataset
-from ..toep_mixer_multiheaded import MLPMixer
+import datasets
+from datasets import load_dataset, load_from_disk
+from toep_mixer_multiheaded import MLPMixer
+
+from dotenv import load_dotenv
+import safetensors
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -64,7 +68,7 @@ class MixerBlock(nn.Module):
 		self.patch_ff = FeedForward(dim)
 		self.n_heads = n_heads
 		self.multiheaded = False
-		if n_heads > 0:
+		if n_heads and n_heads > 0:
 			self.multiheaded = True
 			self.conv = MixerHead(dim, length, dim//n_heads, n_heads=n_heads, kernel=kernel) # proj dim matches outer
 		else:
@@ -91,7 +95,7 @@ class MixerBlock(nn.Module):
 
 class AutoencodingMixer(nn.Module):
 
-	def __init__(self, n_vocab, dim, depth, length, compression=1, kernel=1, n_heads=0, unroll=True, random=False):
+	def __init__(self, n_vocab, dim, depth, length, compression=1, kernel=1, n_heads=0, unroll=True, random=False, frozen_encoder=None):
 		super().__init__()
 		self.n_vocab = n_vocab
 		self.wte = nn.Embedding(n_vocab, dim)
@@ -120,7 +124,6 @@ class AutoencodingMixer(nn.Module):
 			self.up = nn.Linear(dim//compression, dim)
 		self.unroll = unroll
 		self.dim = dim
-		self.clm_encoder = clm_encoder
 		self.projection = nn.Linear(dim//2, dim)
 		self.random_input = random
 
@@ -134,10 +137,7 @@ class AutoencodingMixer(nn.Module):
 		for block in self.encoderblocks:
 			x = block(x)
 		
-		if self.clm_encoder:
-			encoder_embedding = x[:, -2, :].unsqueeze(1)
-		else:
-			encoder_embedding = x[:, -1, :].unsqueeze(1) # dim=[batch, token, hidden]
+		encoder_embedding = x[:, -2, :].unsqueeze(1)
 		
 		if self.compression:
 			encoder_embedding = self.down(encoder_embedding)
@@ -178,7 +178,7 @@ class AutoencodingMixer(nn.Module):
 class TruncatedModel(nn.Module):
 		def __init__(self, model, autoencoder=True):
 				super().__init__()
-				self.model_wte = model.wte
+				self.model_wte = model.input_layer
 				self.model_blocks = model.mixer_blocks   
 
 		def forward(self, x, **args):
@@ -194,7 +194,7 @@ if __name__ == '__main__':
 	data_root = os.getenv('DATA_ROOT')
 	device = "cuda" if torch.cuda.is_available() else "cpu"
 
-	tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenize_fineweb_8k")
+	tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
@@ -202,14 +202,15 @@ if __name__ == '__main__':
 	tokenized_length = 512
 	dim = 1024
 	layers = 16
-	n_heads = 4
+	n_heads = None
 
 	# frozen encoder init and load
 	encoder = MLPMixer(
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 	)
-	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_h4_toep_1024_n16_c512_b32x4/checkpoint-200000/model.safetensors')
-	frozen_encoder = TruncatedModel(frozen_encoder, autoencoder=False)
+	print (encoder)
+	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_toep_1024_n16_c512_b32/checkpoint-200000/model.safetensors')
+	frozen_encoder = TruncatedModel(encoder, autoencoder=False)
 
 
 	compression = 1
@@ -236,7 +237,7 @@ if __name__ == '__main__':
 	print(len(train_dataset), len(test_dataset))
 	mlflow.end_run()
 	print("training begun")
-	print(model)
+	print(encoder)
 
 	batch_size = 32
 	n_devices = 4
@@ -245,11 +246,9 @@ if __name__ == '__main__':
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_pretrained_toep_h4_information\
-	_{encoder_dim}\
-	c{compression}\
-	_d{decoder_dim}\
-	_n{n_layers}\
+	output_dir = f'{checkpoint_root}/fineweb_pretrained_toep_information\
+	_{dim}\
+	_n{layers}\
 	_c{tokenized_length}_b{batch_size}x{n_devices}'
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=2,

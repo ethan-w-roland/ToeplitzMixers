@@ -125,8 +125,8 @@ class MixerBlock(nn.Module):
         self,
         hidden_dim: int,
         seq_len: int,
-        expansion_factor: int = 2,
-        dropout: float = 0.1,
+        expansion_factor: int = 4,
+        dropout: float = 0.,
         heads=None,
         expanded_convs=False,
     ):
@@ -267,7 +267,7 @@ class MLPMixer(nn.Module):
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-if __Name__ == "__main__":
+if __name__ == "__main__":
     load_dotenv()
     checkpoint_root = os.getenv('CHECKPOINT_ROOT')
     data_root = os.getenv('DATA_ROOT')
