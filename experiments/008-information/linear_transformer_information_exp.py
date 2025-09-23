@@ -85,7 +85,7 @@ class LinearTransformer(nn.Module):
 
         def __init__(self, vocab_size, dim, model):
                 super().__init__()
-                #self.lm_head = nn.Linear(dim, vocab_size, bias=False)
+                self.lm_head = nn.Linear(dim, vocab_size, bias=False)
                 self.longformer_model = model
                 self.cel = nn.CrossEntropyLoss()
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
 	dim = 512
 	model= LinearAttentionTransformerLM(
 	    num_tokens = 8000,
-	    dim = 1024,
+	    dim = 512,
 	    heads = 4,
 	    depth = 16,
 	    max_seq_len = 512,
@@ -160,8 +160,8 @@ if __name__ == "__main__":
 	    ff_dropout = 0.,               # dropout for feedforward
 	    attn_layer_dropout = 0.,       # dropout right after self-attention layer
 	    attn_dropout = 0.,             # dropout post-attention
-	    emb_dim = 1024,                  # embedding factorization, to save on memory
-	    dim_head = 256,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
+	    emb_dim = 512,                  # embedding factorization, to save on memory
+	    dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
 	    blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
 	    n_local_attn_heads = 4,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
 	    local_attn_window_size = 1,   # receptive field of the local attention
@@ -169,15 +169,15 @@ if __name__ == "__main__":
 	    ff_chunks = 1,                  # feedforward chunking, from Reformer paper
 	    ff_glu = False,                  # use GLU variant for feedforward
 	    attend_axially = False,         # will fold the sequence by the local attention window size, and do an extra strided attention followed by a feedforward with the cheap q(kv) attention
-	    shift_tokens = False             # add single token shifting, for great improved convergence
+	    shift_tokens = True             # add single token shifting, for great improved convergence
 	)
 
 	encoder = LinearTransformer(vocab_size, dim, model)
 	
 	vocab_size = 8000
 	tokenized_length = 512
-	decoder_dim = 1024
-	n_layers = 8
+	decoder_dim = 512
+	n_layers = 16
 	n_heads = 4
 	llama_config_kwargs = {
     'hidden_size':decoder_dim,
@@ -195,20 +195,7 @@ if __name__ == "__main__":
 
 	print (encoder)
 	# load model from weights
-	#safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_linear_transformer_1024_c512_b32x4/checkpoint-200000/model.safetensors')
-
-	state_dict = {
-       	"model": encoder.state_dict()
-   	}
-
-	checkpoint_path = pathlib.Path("/home/bbadger/Desktop/fineweb_linear_transformer_1024_c512_b32x4/checkpoint-200000")
-	distcp_checkpoint_path = checkpoint_path / "pytorch_model_fsdp_0"
-	dist_cp.load_state_dict(
-               state_dict=state_dict,
-               storage_reader = dist_cp.FileSystemReader(distcp_checkpoint_path),
-               no_dist=True,
-           )
-	encoder.load_state_dict(state_dict["model"], strict=False)
+	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_linear_transformer_512_c512_b32x4/checkpoint-200000/model.safetensors')
 
 	encoder_model = encoder.longformer_model.transformer
 	encoder_pe = encoder.longformer_model.pos_emb
@@ -230,7 +217,7 @@ if __name__ == "__main__":
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_lineartransformer_1024_information\
+	output_dir = f'{checkpoint_root}/fineweb_pretrained_lineartransformer_512_information\
 _{dim}\
 _n{n_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -261,5 +248,5 @@ _c{tokenized_length}_b{batch_size}x{n_devices}'
 	)
 
 	model.train()
-	trainer.train()
+	trainer.train(output_dir + '/checkpoint-48000')
 

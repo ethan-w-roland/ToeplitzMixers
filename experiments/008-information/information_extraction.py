@@ -209,7 +209,7 @@ if __name__ == '__main__':
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 	)
 	print (encoder)
-	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_toep_1024_n16_c512_b32/checkpoint-200000/model.safetensors')
+	#safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_toep_1024_n16_c512_b32/checkpoint-200000/model.safetensors')
 	frozen_encoder = TruncatedModel(encoder, autoencoder=False)
 
 
@@ -246,7 +246,7 @@ if __name__ == '__main__':
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_pretrained_toep_information\
+	output_dir = f'{checkpoint_root}/fineweb_untrained_toep_information\
 	_{dim}\
 	_n{layers}\
 	_c{tokenized_length}_b{batch_size}x{n_devices}'
