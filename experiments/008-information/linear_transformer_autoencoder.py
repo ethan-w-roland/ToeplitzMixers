@@ -20,7 +20,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class UnrolledAutoencodingTransformer(nn.Module):
 
-	def __init__(self, n_vocab, dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False, encoder_pos=None):
+	def __init__(self, n_vocab, dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False, encoder_pos=None, decoder_pos=None):
 		super().__init__()
 		self.wte = nn.Embedding(n_vocab, dim)
 		self.encoder = encoder_model
@@ -44,6 +44,7 @@ class UnrolledAutoencodingTransformer(nn.Module):
 		self.random_input = random
 		self.n_vocab = n_vocab
 		self.encoder_pos = encoder_pos
+		self.decoder_pos = decoder_pos
 	
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
@@ -75,7 +76,7 @@ class UnrolledAutoencodingTransformer(nn.Module):
 		x = encoder_embedding
 		if self.decoder_pos:
 			x = x + self.decoder_pos(x).type(x.type()) # matches linear transformer default
-		x = self.decoder(x)
+		x = self.decoder(x, attention_mask=attention_mask, labels=labels)
 
 		output = self.lm_head(x)
 		output = rearrange(output, 'b t e -> b e t')
@@ -206,7 +207,7 @@ if __name__ == "__main__":
 	encoder_model = encoder.longformer_model.transformer
 	decoder_model = decoder.longformer_model.transformer
 	encoder_pe = encoder.longformer_model.pos_emb
-	model = UnrolledAutoencodingTransformer(vocab_size, decoder_dim, encoder_model, decoder, tokenized_length=512, compression=1, random=False, freeze_encoder=True, encoder_pos=encoder_pe, decoder_pos=encoder_pe)
+	model = UnrolledAutoencodingTransformer(vocab_size, decoder_dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False, encoder_pos=encoder_pe, decoder_pos=encoder_pe)
 	print (model)
 	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
 	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
@@ -242,7 +243,7 @@ _c{tokenized_length}_b{batch_size}x{n_devices}'
 		output_dir=output_dir,
 		optim="adamw_torch",
 		overwrite_output_dir=True,
-		save_safetensors=True,
+		save_safetensors=False,
 		max_steps=200000,
 	)
 
