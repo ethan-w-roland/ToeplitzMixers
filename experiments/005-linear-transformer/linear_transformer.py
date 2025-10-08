@@ -84,7 +84,7 @@ config_kwargs = {
 #print (model)
 model = LinearAttentionTransformerLM(
     num_tokens = 8000,
-    dim = 512,
+    dim = 256,
     heads = 4,
     depth = 16,
     max_seq_len = 512,
@@ -92,11 +92,11 @@ model = LinearAttentionTransformerLM(
     ff_dropout = 0.,               # dropout for feedforward
     attn_layer_dropout = 0.,       # dropout right after self-attention layer
     attn_dropout = 0.,             # dropout post-attention
-    emb_dim = 512,                  # embedding factorization, to save on memory
+    emb_dim = 256,                  # embedding factorization, to save on memory
     dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
-    blindspot_size = 64,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
+    blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
     n_local_attn_heads = 4,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
-    local_attn_window_size = 256,   # receptive field of the local attention
+    local_attn_window_size = 1,    # receptive field of the local attention
     reversible = False,              # use reversible nets, from Reformer paper
     ff_chunks = 1,                  # feedforward chunking, from Reformer paper
     ff_glu = False,                  # use GLU variant for feedforward
@@ -106,7 +106,7 @@ model = LinearAttentionTransformerLM(
 model = LinearTransformer(vocab_size, dim, model)
 train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
 test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
-
+print (model)
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
@@ -114,13 +114,14 @@ test_dataset = load_from_disk(test_path)
 #test_dataset = test_dataset.rename_column('input_ids', 'x')
 print (train_dataset[0])
 # descriptive name for output
-output_dir = '/home/bbadger/Desktop/fineweb_linear_transformer_l256_512_c512'
+output_dir = '/home/bbadger/Desktop/fineweb_linear_transformer_512_l0_c512'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
 	num_train_epochs=3,
 	per_device_train_batch_size=32,
 	per_device_eval_batch_size=32,
+        gradient_accumulation_steps=1,
 	warmup_steps=500,
 	eval_steps=4000,
 	save_steps=4000,

@@ -135,8 +135,7 @@ if __name__ == "__main__":
 	dim = 512
 	depth = 16
 	length = 512
-	compression=4     
-	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=4, compression=compression)
+	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=4)
 	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
 	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
@@ -153,7 +152,7 @@ if __name__ == "__main__":
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_mixer_compression4\
+	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_mixer\
 _{dim}\
 _n{depth}\
 _c{length}_b{batch_size}x{n_devices}'

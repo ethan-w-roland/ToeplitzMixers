@@ -1,6 +1,22 @@
 ### Modified from https://github.com/lucidrains/linear-attention-transformer/blob/master/linear_attention_transformer/linear_attention_transformer.py
 ### Credits to Phil Wang, @lucidrains
 
+import os
+import torch
+from einops import rearrange
+import transformers
+from transformers import AutoTokenizer
+import mlflow
+import torch.nn as nn
+
+from datasets import load_dataset, load_from_disk
+import transformers
+from prettytable import PrettyTable
+from safetensors.torch import save_file
+from safetensors import safe_open
+import datasets
+import warnings
+import shutil
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
@@ -286,35 +302,32 @@ class LinearAttentionTransformer(nn.Module):
         attn_dropout = 0.,
     ):
         super().__init__()
-        if type(n_local_attn_heads) is not tuple:
-            n_local_attn_heads = tuple([n_local_attn_heads] * depth)
 
         layers = nn.ModuleList([])
 
-        for ind, local_heads in zip(range(depth), n_local_attn_heads):
+        for ind in range(depth):
             layer_num = ind + 1
             parallel_net = Chunk(ff_chunks, FeedForward(dim), along_dim = 1) 
-            attn = SelfAttention(dim, heads, causal, dim_head = dim_head, blindspot_size = blindspot_size, n_local_attn_heads = local_heads, local_attn_window_size = local_attn_window_size, dropout = attn_layer_dropout, attn_dropout= attn_dropout)
+            attn = SelfAttention(dim, heads, causal, dim_head = dim_head, dropout = attn_layer_dropout, attn_dropout= attn_dropout)
 
-            layers.append(nn.ModuleList([
+            layers.append(nn.Sequential(
                 PreNorm(dim, attn),
                 PreNorm(dim, parallel_net)
-            ]))
+            ))
 
-        execute_type = SequentialSequence
-        context_route_map = {}
-        attn_route_map = {}
-        self.layers = execute_type(layers, args_route = {**attn_route_map, **context_route_map})
+        self.layers = layers 
 
         self.pad_to_multiple = lcm(
-            1 if not causal else blindspot_size,
-            1 if all([(h == 0) for h in n_local_attn_heads]) else local_attn_window_size
+            1,
+            1
         )
 
     def forward(self, x, **kwargs):
-        return self.layers(x, **kwargs)
+        for layer in self.layers:
+             x = layer(x, **kwargs)
+        return x
 
-class LinearTransformer(nn.Module):
+class LinearTransformerLM(nn.Module):
     def __init__(
         self,
         num_tokens,
@@ -356,14 +369,14 @@ class LinearTransformer(nn.Module):
             self.transformer = ProjectInOut(self.transformer, emb_dim, dim, project_out = not return_embeddings)
 
         self.norm = nn.LayerNorm(emb_dim)
-        self.out = nn.Linear(emb_dim, num_tokens) if not return_embeddings else nn.Identity()
+        self.out = nn.Linear(emb_dim, num_tokens)
 
     def forward(self, x, **kwargs):
         x = self.token_emb(x)
         x = x + self.pos_emb(x).type(x.type())
 
         layer_pos_emb = self.layer_pos_emb(x)
-        x = self.transformer(x, pos_emb = layer_pos_emb, **kwargs)
+        x = self.transformer(x, **kwargs)
         x = self.norm(x)
         return self.out(x)
 
@@ -372,7 +385,7 @@ class LinearTransformer(nn.Module):
         def __init__(self, vocab_size, dim, model):
                 super().__init__()
                 self.lm_head = nn.Linear(dim, vocab_size, bias=False)
-                self.longformer_model = model
+                self.model = model
                 self.cel = nn.CrossEntropyLoss()
 
         def forward(self, input_ids: torch.tensor, attention_mask: torch.tensor, labels: torch.tensor, **kwargs):
@@ -386,19 +399,19 @@ class LinearTransformer(nn.Module):
                 loss = self.cel(shift_logits, shift_labels)
                 return loss, output
 
-
+device='cuda' if torch.cuda.is_available() else 'cpu'
 tokenizer = AutoTokenizer.from_pretrained(f"/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 512
+dim = 256
 context_length = 512
 n_layers = 16
 n_heads = 4
 
-model = LinearAttentionTransformerLM(
+model = LinearTransformerLM(
     num_tokens = 8000,
-    dim = 512,
+    dim = 256,
     heads = 4,
     depth = 16,
     max_seq_len = 512,
@@ -406,21 +419,21 @@ model = LinearAttentionTransformerLM(
     ff_dropout = 0.,               # dropout for feedforward
     attn_layer_dropout = 0.,       # dropout right after self-attention layer
     attn_dropout = 0.,             # dropout post-attention
-    emb_dim = 512,                  # embedding factorization, to save on memory
-    dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
+    emb_dim = 256,                  # embedding factorization, to save on memory
+    dim_head = 64,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
     blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
 )
 
 model = LinearTransformer(vocab_size, dim, model)
+print (model)
 train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
 test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
-print (train_dataset[0])
 # descriptive name for output
-output_dir = '/home/bbadger/Desktop/fineweb_fullin_512_h4_n16_c512'
+output_dir = '/home/bbadger/Desktop/fineweb_fullin_256_h4_n16_c512'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
@@ -430,14 +443,14 @@ training_arguments = transformers.TrainingArguments(
     warmup_steps=500,
     eval_steps=4000,
     save_steps=4000,
-    learning_rate=2e-4, 
+    learning_rate=1e-5, 
     fp16=True, 
     eval_strategy='steps',
     output_dir=output_dir,
     optim='adamw_torch',
     overwrite_output_dir=True,
     max_steps=200000,
-        ddp_find_unused_parameters=True
+    ddp_find_unused_parameters=True
 )
 
 trainer = transformers.Trainer(
