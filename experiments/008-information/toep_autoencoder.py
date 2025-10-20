@@ -10,10 +10,24 @@ import os
 from dotenv import load_dotenv
 
 from toep_mixer_multiheaded import MixerBlock
+from frozen_toep_mixer_multiheaded import MixerBlock as FrozenMixerBlock
 
 class AutoencodingMixer(nn.Module):
 
-	def __init__(self, n_vocab, dim, depth, length, compression=1, double_tokens=False, kernel=1, n_heads=0, unroll=True, random=False, frozen_encoder=None, clm_encoder=False):
+	def __init__(self, n_vocab, 
+			dim, 
+			depth, 
+			length, 
+			compression=1, 
+			double_tokens=False, 
+			kernel=1, 
+			n_heads=0, 
+			unroll=True, 
+			random=False, 
+			frozen_encoder=None, 
+			clm_encoder=False,
+			frozen_toeplitz=True
+		):
 		super().__init__()
 		self.double_tokens = double_tokens
 		self.n_vocab = n_vocab
@@ -28,23 +42,44 @@ class AutoencodingMixer(nn.Module):
 			self.encoderblocks = frozen_encoder.model_blocks.to(device)
 			#self.wte = frozen_encoder.model_wte.to(device)
 		else:
-			self.encoderblocks = nn.ModuleList(
-			[MixerBlock(
-				hidden_dim = dim,
-				seq_len = length,
-				heads = n_heads,
-				)
-			for i in range(depth)]
-			).to(device)
+			if frozen_toeplitz:
+				self.encoderblocks = nn.ModuleList(
+					[FrozenMixerBlock(
+					hidden_dim = dim,
+					seq_len = length,
+					heads = n_heads,
+					)
+				for i in range(depth)]
+				).to(device)
+			else:
+				self.encoderblocks = nn.ModuleList(
+				[MixerBlock(
+					hidden_dim = dim,
+					seq_len = length,
+					heads = n_heads,
+					)
+				for i in range(depth)]
+				).to(device)
 	
-		self.decoderblocks = nn.ModuleList(
-			[MixerBlock(
-				hidden_dim = dim,
-				seq_len = length,
-				heads = n_heads,
-				)
-			for i in range(depth)]
-			).to(device)
+
+		if frozen_toepliz:
+			self.decoderblocks = nn.ModuleList(
+					[FrozenMixerBlock(
+					hidden_dim = dim,
+					seq_len = length,
+					heads = n_heads,
+					)
+				for i in range(depth)]
+				).to(device)
+		else:
+			self.decoderblocks = nn.ModuleList(
+				[MixerBlock(
+					hidden_dim = dim,
+					seq_len = length,
+					heads = n_heads,
+					)
+				for i in range(depth)]
+				).to(device)
 			
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
 		self.cel = nn.CrossEntropyLoss()
@@ -135,8 +170,8 @@ if __name__ == "__main__":
 	dim = 512
 	depth = 16
 	length = 512
-	compression=4     
-	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=4, compression=compression)
+	compression=1     
+	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=4, compression=compression, frozen_toeplitz=True)
 	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
 	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
@@ -153,7 +188,7 @@ if __name__ == "__main__":
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_mixer_compression4\
+	output_dir = f'{checkpoint_root}/fineweb_autoencoding_frozentoep_mixer\
 _{dim}\
 _n{depth}\
 _c{length}_b{batch_size}x{n_devices}'
