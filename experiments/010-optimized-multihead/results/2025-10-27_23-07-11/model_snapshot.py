@@ -15,6 +15,7 @@ class Config:
     dropout: float
     do_toep_mean: bool
     do_toep_proj: bool
+    parallel_mixer: bool = True
 
 
 def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
@@ -96,17 +97,26 @@ class MultiHeadMixer(nn.Module):
             # Apply Toeplitz mixing: (B, H, D, S) @ (H, S, S) -> (B, H, D, S)
             # Flatten batch and heads for bmm: (B*H, D, S) @ (B*H, S, S) -> (B*H, D, S)
             x = x.reshape(B * H, D, S)
-            W = W.repeat_interleave(B, dim=0)  # (H, S, S) -> (B*H, S, S)
+            # Expand W to match x's organization: [head0_batch0, head0_batch1, ..., head1_batch0, ...]
+            W = W.unsqueeze(0).expand(B, H, S, S).reshape(B * H, S, S)  # (B*H, S, S)
             x = torch.bmm(x, W)
             
             # Normalize by sum of weights to frame as weighted average
             if self.do_toep_mean:
+                # Compute norm_factors per head: (H, S)
                 norm_factors = torch.cumsum(self.weight[:, :S], dim=-1)  # (H, S)
-                norm_factors = norm_factors.repeat_interleave(B, dim=0).unsqueeze(1)  # (B*H, 1, S)
-                x = x / norm_factors  # Broadcast: (B*H, D, S) / (B*H, 1, S)
+                # Expand to (B*H, S) matching x's organization
+                norm_factors = norm_factors.unsqueeze(0).expand(B, H, S).reshape(B * H, S)  # (B*H, S)
+                x = x / norm_factors.unsqueeze(1)  # Broadcast: (B*H, D, S) / (B*H, 1, S)
             
             # Add bias: (H, S) broadcasted to (B*H, D, S)
-            x = x + self.bias[:, :S].repeat_interleave(B, dim=0).unsqueeze(1)
+            # Need to expand (H, S) to (B*H, S) where x is (B*H, D, S)
+            # x is organized as [head0_batch0, head0_batch1, ..., head1_batch0, head1_batch1, ...]
+            bias_expanded = self.bias[:, :S].unsqueeze(0).expand(B, H, S).reshape(B * H, S)  # (B*H, S)
+            x = x + bias_expanded.unsqueeze(1)  # (B*H, D, S) + (B*H, 1, S)
+            
+            # Reshape back to (B, E, S)
+            x = x.reshape(B, E, S)
 
         else:
             
@@ -194,7 +204,6 @@ class MultiHeadMixer(nn.Module):
         w_flipped = torch.flip(w, dims=[1])  # (H, T)
         
         # Compute: (B, H, D, T) * (H, T) -> (B, H, D)
-        # Use einsum: bhdt,ht->bhd
         y_t = torch.einsum("bhdt,ht->bhd", hist, w_flipped)
         
         # Apply normalization if enabled
@@ -259,6 +268,8 @@ class MLPMixer(nn.Module):
     def __init__(self, config: Config):
 
         super().__init__()
+        
+        self.parallel_mixer = config.parallel_mixer
 
         # Input Embedding
         self.inp_embed = nn.Embedding(config.vocab_size, config.embed_dim)
@@ -283,9 +294,13 @@ class MLPMixer(nn.Module):
         self,
         input_ids: torch.Tensor,
         labels: torch.Tensor | None = None,
-        parallel: bool = True,
+        parallel: bool | None = None,
         **kwargs,  # Ignore other HF-specific arguments like attention_mask, token_type_ids
     ) -> Dict[str, torch.Tensor | None]:
+    
+        # Use self.parallel_mixer as default if parallel is not explicitly provided
+        if parallel is None:
+            parallel = self.parallel_mixer
         
         x = self.inp_embed(input_ids)
         for block in self.blocks:

@@ -1,11 +1,15 @@
 """
-Train and benchmark 4 model variants of MultiHeadMixer.
+Train and benchmark 8 model variants of MultiHeadMixer.
 
 Trains all combinations of:
 - do_toep_mean: [True, False]
 - do_toep_proj: [True, False]
+- parallel_mixer: [True, False]
 
-Then benchmarks each model with both parallel=True and parallel=False for generation.
+Then benchmarks each model with both parallel=True and parallel=False for generation,
+as well as cached=True and cached=False for inference.
+
+Total: 8 training variants × 4 generation benchmarks = 32 tests
 """
 
 import torch
@@ -14,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict
+from itertools import product
 from datasets import load_from_disk
 from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
 from mixer import MLPMixer, Config
@@ -21,17 +26,19 @@ import shutil
 from datetime import datetime
 
 
-def get_model_name(do_toep_mean: bool, do_toep_proj: bool) -> str:
+def get_model_name(do_toep_mean: bool, do_toep_proj: bool, parallel_mixer: bool) -> str:
     """Generate a descriptive name for the model variant."""
     mean_str = "mean" if do_toep_mean else "nomean"
     proj_str = "proj" if do_toep_proj else "noproj"
-    return f"{mean_str}_{proj_str}"
+    parallel_str = "parallel" if parallel_mixer else "sequential"
+    return f"{mean_str}_{proj_str}_{parallel_str}"
 
 
 def create_model(
     vocab_size: int,
     do_toep_mean: bool,
     do_toep_proj: bool,
+    parallel_mixer: bool,
     device: torch.device,
     seq_len: int = 512,
     dim: int = 512,
@@ -49,6 +56,7 @@ def create_model(
         dropout=0.1,
         do_toep_mean=do_toep_mean,
         do_toep_proj=do_toep_proj,
+        parallel_mixer=parallel_mixer,
     )
     model = MLPMixer(config).to(device)
     print(f"Model params: {model.count_params():,}")
@@ -221,23 +229,29 @@ def main():
     shutil.copy(code_path, results_dir / "train_script.py")
     shutil.copy(code_path.parent / "mixer.py", results_dir / "model_snapshot.py")
     
-    # Define model variants to train
-    variants = [
-        (True, True),    # mean + proj
-        (True, False),   # mean, no proj
-        (False, True),   # no mean + proj
-        (False, False),  # no mean, no proj
-    ]
+    # Define model variants using cartesian product
+    do_toep_mean_options = [True, False]
+    do_toep_proj_options = [True, False]
+    parallel_mixer_options = [True, False]
+    
+    # Get cartesian product of all options
+    config_combinations = list(product(
+        do_toep_mean_options,
+        do_toep_proj_options,
+        parallel_mixer_options
+    ))
     
     all_results = []
     
     # Train and benchmark each variant
-    for do_toep_mean, do_toep_proj in variants:
-        model_name = get_model_name(do_toep_mean, do_toep_proj)
+    for do_toep_mean, do_toep_proj, parallel_mixer in config_combinations:
+        model_name = get_model_name(do_toep_mean, do_toep_proj, parallel_mixer)
+        
         print("\n" + "="*80)
         print(f"TRAINING VARIANT: {model_name}")
         print(f"  do_toep_mean: {do_toep_mean}")
         print(f"  do_toep_proj: {do_toep_proj}")
+        print(f"  parallel_mixer: {parallel_mixer}")
         print("="*80)
         
         # Create model
@@ -245,17 +259,24 @@ def main():
             vocab_size=vocab_size,
             do_toep_mean=do_toep_mean,
             do_toep_proj=do_toep_proj,
+            parallel_mixer=parallel_mixer,
             device=device,
         )
         
-        # Train
+        # Train with timing
         output_dir = results_dir / model_name
+        train_start = time.time()
         training_metrics = train_model(
             model=model,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             tokenizer=tokenizer,
             output_dir=output_dir,
+        )
+        train_end = time.time()
+        training_metrics['training_wallclock_time'] = train_end - train_start
+        training_metrics['training_speed_iterations_per_sec'] = (
+            training_metrics.get('train_steps', 0) / training_metrics['training_wallclock_time']
         )
         
         # Benchmark generation: cached/uncached × parallel/sequential = 4 combinations
@@ -295,6 +316,7 @@ def main():
             "config": {
                 "do_toep_mean": do_toep_mean,
                 "do_toep_proj": do_toep_proj,
+                "parallel_mixer": parallel_mixer,
             },
             "training": training_metrics,
             "generation": {
@@ -320,6 +342,8 @@ def main():
         
         # Print summary
         print(f"\n{model_name} Summary:")
+        print(f"  Training wallclock time: {training_metrics['training_wallclock_time']:.2f}s")
+        print(f"  Training speed: {training_metrics['training_speed_iterations_per_sec']:.2f} iterations/s")
         print(f"  Eval Loss: {training_metrics['eval_loss']:.4f}")
         print(f"  Generation Speed:")
         print(f"    Cached + Parallel:     {cached_parallel['tokens_per_second']:>8.1f} tokens/s")
