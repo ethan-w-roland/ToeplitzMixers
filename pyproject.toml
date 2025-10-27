@@ -5,6 +5,7 @@ description = "Toeplitz MLP Mixers Experiments"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "accelerate>=1.11.0",
     "black==24.10.0",
     "datasets>=4.0.0",
     "jupyter>=1.1.1",
