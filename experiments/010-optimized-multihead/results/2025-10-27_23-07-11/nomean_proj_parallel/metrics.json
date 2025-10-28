@@ -1,0 +1,60 @@
+{
+  "model_name": "nomean_proj_parallel",
+  "config": {
+    "do_toep_mean": false,
+    "do_toep_proj": true,
+    "parallel_mixer": true
+  },
+  "training": {
+    "train_loss": 2.499734654472271,
+    "eval_loss": 2.1106619834899902,
+    "train_runtime": 1235.6839,
+    "train_samples_per_second": 1923.965,
+    "training_wallclock_time": 1246.2683217525482,
+    "training_speed_iterations_per_sec": 0.0
+  },
+  "generation": {
+    "cached_parallel": {
+      "parallel": true,
+      "use_cache": true,
+      "avg_time_seconds": 0.4238536834716797,
+      "tokens_per_second": 1207.9640214668796,
+      "num_tokens": 128,
+      "batch_size": 4,
+      "num_runs": 10
+    },
+    "cached_sequential": {
+      "parallel": false,
+      "use_cache": true,
+      "avg_time_seconds": 0.42363409996032714,
+      "tokens_per_second": 1208.5901490176268,
+      "num_tokens": 128,
+      "batch_size": 4,
+      "num_runs": 10
+    },
+    "uncached_parallel": {
+      "parallel": true,
+      "use_cache": false,
+      "avg_time_seconds": 0.5621348857879639,
+      "tokens_per_second": 910.8134238676753,
+      "num_tokens": 128,
+      "batch_size": 4,
+      "num_runs": 10
+    },
+    "uncached_sequential": {
+      "parallel": false,
+      "use_cache": false,
+      "avg_time_seconds": 1.0158704757690429,
+      "tokens_per_second": 504.0012602122346,
+      "num_tokens": 128,
+      "batch_size": 4,
+      "num_runs": 10
+    }
+  },
+  "speedups": {
+    "cache_speedup_parallel": 1.3262474946157303,
+    "cache_speedup_sequential": 2.397990331430303,
+    "parallel_speedup_cached": 0.9994819355831618,
+    "parallel_speedup_uncached": 1.8071649731275121
+  }
+}
