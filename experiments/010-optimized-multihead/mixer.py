@@ -14,7 +14,6 @@ class Config:
     mlp_dim: int
     dropout: float
     do_toep_mean: bool
-    do_toep_proj: bool
     parallel_mixer: bool = True
 
 
@@ -59,12 +58,16 @@ class MultiHeadMixer(nn.Module):
         self.do_toep_proj = config.do_toep_proj
         
         # Toeplitz parameters for all heads
-        self.weight = nn.Parameter(torch.randn(config.num_heads, config.seq_len))
+        self.weight_raw = nn.Parameter(torch.randn(config.num_heads, config.seq_len))
         self.bias = nn.Parameter(torch.zeros(config.num_heads, config.seq_len))
-        
-        if self.do_toep_proj:
-            self.inp_proj = nn.Linear(config.embed_dim, config.embed_dim, bias=True)
-            self.out_proj = nn.Linear(config.embed_dim, config.embed_dim, bias=False)
+
+        self.inp_proj = nn.Linear(config.embed_dim, config.embed_dim, bias=True)
+        self.out_proj = nn.Linear(config.embed_dim, config.embed_dim, bias=False)
+    
+    @property
+    def weight(self):
+        """Expose non-negative weights via softplus parameterization."""
+        return F.softplus(self.weight_raw)
 
     def forward(
         self,
@@ -79,8 +82,7 @@ class MultiHeadMixer(nn.Module):
         D = self.hidden_dim
         
         # Apply input projection: (B, S, E) -> (B, S, E)
-        if self.do_toep_proj:
-            x = self.inp_proj(x)
+        x = self.inp_proj(x)
         
         # Transpose to (B, E, S) for Toeplitz processing
         x = x.transpose(1, 2)
@@ -104,6 +106,7 @@ class MultiHeadMixer(nn.Module):
             # Normalize by sum of weights to frame as weighted average
             if self.do_toep_mean:
                 # Compute norm_factors per head: (H, S)
+                # weights are guaranteed non-negative via softplus parameterization
                 norm_factors = torch.cumsum(self.weight[:, :S], dim=-1)  # (H, S)
                 # Expand to (B*H, S) matching x's organization
                 norm_factors = norm_factors.unsqueeze(0).expand(B, H, S).reshape(B * H, S)  # (B*H, S)
@@ -149,8 +152,7 @@ class MultiHeadMixer(nn.Module):
         x = x.transpose(1, 2)
         
         # Apply output projection: (B, S, E) -> (B, S, E)
-        if self.do_toep_proj:
-            x = self.out_proj(x)
+        x = self.out_proj(x)
         
         return x
     
@@ -160,6 +162,7 @@ class MultiHeadMixer(nn.Module):
         x_t: torch.Tensor,  # (B, E) - single timestep input
         hist: torch.Tensor | None,  # (B, H, D, Tprev) or None - history per head
         max_len: int,
+        parallel: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Cached incremental forward pass for autoregressive generation.
@@ -168,6 +171,7 @@ class MultiHeadMixer(nn.Module):
             x_t: Input features for current timestep, shape (B, E)
             hist: History of features per head, shape (B, H, D, Tprev) or None
             max_len: Maximum history length to maintain
+            parallel: If True, process all heads in parallel (fast). If False, process sequentially.
             
         Returns:
             y_t: Output for current timestep, shape (B, E)
@@ -177,9 +181,8 @@ class MultiHeadMixer(nn.Module):
         H = self.n_heads
         D = self.hidden_dim
         
-        # Apply input projection if needed
-        if self.do_toep_proj:
-            x_t = self.inp_proj(x_t)  # (B, E)
+        # Apply input projection
+        x_t = self.inp_proj(x_t)  # (B, E)
         
         # Reshape to (B, H, D)
         x_t = x_t.view(B, H, D)
@@ -196,32 +199,57 @@ class MultiHeadMixer(nn.Module):
         
         T = hist.size(-1)
         
-        # Compute output for each head
-        # For each head h, we want: y[h] = sum_{t'=0}^{T-1} w[h, T-1-t'] * hist[h, :, t']
-        # This is equivalent to: y[h] = hist[h, :, :] @ flip(w[h, :T])
+        if parallel:
+            # Compute output for each head in parallel using einsum
+            # For each head h, we want: y[h] = sum_{t'=0}^{T-1} w[h, T-1-t'] * hist[h, :, t']
+            # This is equivalent to: y[h] = hist[h, :, :] @ flip(w[h, :T])
+            
+            w = self.weight[:, :T]  # (H, T) - already softplus'd via property
+            w_flipped = torch.flip(w, dims=[1])  # (H, T)
+            
+            # Compute: (B, H, D, T) * (H, T) -> (B, H, D)
+            y_t = torch.einsum("bhdt,ht->bhd", hist, w_flipped)
+            
+            # Apply normalization if enabled
+            if self.do_toep_mean:
+                norm_factors = torch.cumsum(w, dim=-1)  # (H, T)
+                norm_factor_current = norm_factors[:, -1]  # (H,) - use the last (current) position
+                y_t = y_t / norm_factor_current.view(1, H, 1)  # (B, H, D) / (1, H, 1)
+            
+            # Add bias for current timestep
+            bias_current = self.bias[:, T-1]  # (H,) - bias for position T-1
+            y_t = y_t + bias_current.view(1, H, 1)  # (B, H, D) + (1, H, 1)
         
-        w = self.weight[:, :T]  # (H, T)
-        w_flipped = torch.flip(w, dims=[1])  # (H, T)
-        
-        # Compute: (B, H, D, T) * (H, T) -> (B, H, D)
-        y_t = torch.einsum("bhdt,ht->bhd", hist, w_flipped)
-        
-        # Apply normalization if enabled
-        if self.do_toep_mean:
-            norm_factors = torch.cumsum(self.weight[:, :T], dim=-1)  # (H, T)
-            norm_factor_current = norm_factors[:, -1]  # (H,) - use the last (current) position
-            y_t = y_t / norm_factor_current.view(1, H, 1)  # (B, H, D) / (1, H, 1)
-        
-        # Add bias for current timestep
-        bias_current = self.bias[:, T-1]  # (H,) - bias for position T-1
-        y_t = y_t + bias_current.view(1, H, 1)  # (B, H, D) + (1, H, 1)
+        else:
+            # Process each head sequentially
+            y_t = torch.zeros(B, H, D, device=x_t.device, dtype=x_t.dtype)
+            
+            for h in range(H):
+                # Get weights for this head
+                w_h = self.weight[h, :T]  # (T,) - already softplus'd via property
+                w_h_flipped = torch.flip(w_h, dims=[0])  # (T,)
+                
+                # Compute weighted sum: (B, D, T) @ (T,) -> (B, D)
+                y_h = torch.einsum("bdt,t->bd", hist[:, h, :, :], w_h_flipped)  # (B, D)
+                
+                # Apply normalization if enabled
+                if self.do_toep_mean:
+                    norm_factors = torch.cumsum(w_h, dim=-1)  # (T,)
+                    norm_factor_current = norm_factors[-1]  # scalar
+                    y_h = y_h / norm_factor_current  # (B, D)
+                
+                # Add bias for this head
+                bias_current = self.bias[h, T-1]  # scalar
+                y_h = y_h + bias_current  # (B, D)
+                
+                # Store result
+                y_t[:, h, :] = y_h
         
         # Reshape back to (B, E)
         y_t = y_t.reshape(B, E)
         
         # Apply output projection if needed
-        if self.do_toep_proj:
-            y_t = self.out_proj(y_t)  # (B, E)
+        y_t = self.out_proj(y_t)  # (B, E)
         
         return y_t, hist
 
@@ -282,8 +310,13 @@ class MLPMixer(nn.Module):
 
     def _init_weights(self):
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, MultiHeadMixer) or isinstance(m, nn.Embedding):
+            if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
                 nn.init.normal_(m.weight, mean=0.0, std=0.2)
+                if hasattr(m, 'bias') and m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, MultiHeadMixer):
+                # Initialize weight_raw (will be exposed as non-negative via softplus property)
+                nn.init.normal_(m.weight_raw, mean=0.0, std=0.2)
                 if hasattr(m, 'bias') and m.bias is not None:
                     nn.init.zeros_(m.bias)
 
@@ -375,10 +408,10 @@ class MLPMixer(nn.Module):
         Uses cached incremental inference - only processes new tokens
         rather than reprocessing entire sequence each step.
         
-        Args:
+            Args:
             x: Input token IDs, shape (B, T) or (T,)
             max_tokens: Number of tokens to generate
-            parallel: Whether to use parallel head processing (note: step() always efficient)
+            parallel: Whether to use parallel head processing (for both forward and step)
             
         Returns:
             Generated token sequence, shape (B, T+max_tokens)
@@ -405,9 +438,8 @@ class MLPMixer(nn.Module):
             H = block.mixer.n_heads
             D = block.mixer.hidden_dim
             
-            # Apply input projection if needed
-            if block.mixer.do_toep_proj:
-                n1 = block.mixer.inp_proj(n1)
+            # Apply input projection
+            n1 = block.mixer.inp_proj(n1)
             
             # Reshape: (B, T, E) -> (B, E, T) -> (B, H, D, T)
             hist = n1.transpose(1, 2).contiguous()  # (B, E, T)
@@ -440,7 +472,7 @@ class MLPMixer(nn.Module):
                 
                 # Cached mixer step
                 y_t, new_hist = block.mixer.step(
-                    n1_t, cache, seq_len
+                    n1_t, cache, seq_len, parallel=parallel
                 )  # (B, E), (B, H, D, T)
                 
                 h_t = h_t + y_t
