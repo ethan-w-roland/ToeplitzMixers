@@ -32,7 +32,7 @@ class UnrolledAutoencodingTransformer(nn.Module):
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
 		self.cel = nn.CrossEntropyLoss()
 		self.tokenized_length = tokenized_length
-		assert dim >= tokenized_length
+		#assert dim >= tokenized_length
 		unroll_factor = dim // tokenized_length #assumes
 		self.projection = nn.Linear(dim//2, dim)
 		self.dim = dim
@@ -65,9 +65,10 @@ class UnrolledAutoencodingTransformer(nn.Module):
 		embedding_stack = []
 		# sliding window unroll over hidden dim
 		for i in range(self.tokenized_length):
+			i %= self.dim
 			sliding_window = encoder_embedding[..., i:i+self.dim//2]
 			if i+self.dim//2 > self.dim:
-				residual = i+self.dim//2 - self.tokenized_length
+				residual = i+self.dim//2 - self.dim 
 				# loop around to first index
 				sliding_window = torch.cat((sliding_window, encoder_embedding[..., :residual]), dim=2)
 			embedding_stack.append(sliding_window)
@@ -152,10 +153,10 @@ if __name__ == "__main__":
 	print("Vocab size: ", n_vocab)
 
 	vocab_size = 8000
-	dim = 512
+	dim = 256
 	model= LinearAttentionTransformerLM(
 	    num_tokens = 8000,
-	    dim = 512,
+	    dim = 256,
 	    heads = 4,
 	    depth = 16,
 	    max_seq_len = 512,
@@ -163,10 +164,10 @@ if __name__ == "__main__":
 	    ff_dropout = 0.,               # dropout for feedforward
 	    attn_layer_dropout = 0.,       # dropout right after self-attention layer
 	    attn_dropout = 0.,             # dropout post-attention
-	    emb_dim = 512,                  # embedding factorization, to save on memory
-	    dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
+	    emb_dim = 256,                  # embedding factorization, to save on memory
+	    dim_head = 64,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
 	    blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
-	    n_local_attn_heads = 4,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
+	    n_local_attn_heads = 0,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
 	    local_attn_window_size = 1,   # receptive field of the local attention
 	    reversible = False,              # use reversible nets, from Reformer paper
 	    ff_chunks = 1,                  # feedforward chunking, from Reformer paper
@@ -179,12 +180,12 @@ if __name__ == "__main__":
 	
 	vocab_size = 8000
 	tokenized_length = 512
-	decoder_dim = 512
+	decoder_dim = 256
 	n_layers = 8
 	n_heads = 4
 	model= LinearAttentionTransformerLM(
 	    num_tokens = 8000,
-	    dim = 512,
+	    dim = 256,
 	    heads = 4,
 	    depth = 16,
 	    max_seq_len = 512,
@@ -192,10 +193,10 @@ if __name__ == "__main__":
 	    ff_dropout = 0.,               # dropout for feedforward
 	    attn_layer_dropout = 0.,       # dropout right after self-attention layer
 	    attn_dropout = 0.,             # dropout post-attention
-	    emb_dim = 512,                  # embedding factorization, to save on memory
-	    dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
+	    emb_dim = 256,                  # embedding factorization, to save on memory
+	    dim_head = 64,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
 	    blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
-	    n_local_attn_heads = 4,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
+	    n_local_attn_heads = 0,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
 	    local_attn_window_size = 1,   # receptive field of the local attention
 	    reversible = False,              # use reversible nets, from Reformer paper
 	    ff_chunks = 1,                  # feedforward chunking, from Reformer paper
@@ -209,8 +210,8 @@ if __name__ == "__main__":
 	encoder_pe = encoder.longformer_model.pos_emb
 	model = UnrolledAutoencodingTransformer(vocab_size, decoder_dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False, encoder_pos=encoder_pe, decoder_pos=encoder_pe)
 	print (model)
-	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 	datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 	train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -219,7 +220,7 @@ if __name__ == "__main__":
 	mlflow.end_run()
 
 	batch_size = 32
-	n_devices = 4
+	n_devices = 2
 	# get number of devices (assumes that all visible devices are used for training)
 	if torch.cuda.is_available():
 		n_devices = torch.cuda.device_count()
@@ -232,8 +233,8 @@ _c{tokenized_length}_b{batch_size}x{n_devices}'
 	
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=2,
-		per_device_train_batch_size=16,
-		per_device_eval_batch_size=16,
+		per_device_train_batch_size=32,
+		per_device_eval_batch_size=32,
 		warmup_steps=500,
 		eval_steps=4000,
 		save_steps=8000,

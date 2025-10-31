@@ -78,8 +78,8 @@ class UnrolledAutoencodingMamba(nn.Module):
         return loss, output
     
 load_dotenv()
-checkpoint_root = '/home/bbadger/Desktop'
-data_root = '/home/bbadger/Desktop'
+data_root = os.getenv('DATA_ROOT')
+checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
@@ -88,12 +88,12 @@ n_vocab = len(tokenizer)
 print("Vocab size: ", n_vocab)
 
 vocab_size=8000
-dim = 256 
+dim = 512 
 context_length = 512 
 n_layers = 16
-state_size = 256
+state_size = 512
 num_heads = 8
-head_dim = 64
+head_dim = 128
 
 config_kwargs = {
     'hidden_size': dim,
@@ -117,8 +117,8 @@ decoder_model = Mamba2Model(config)
 
 model = UnrolledAutoencodingMamba(vocab_size, dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False)
 print (model)
-train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -126,8 +126,8 @@ test_dataset = load_from_disk(test_path, keep_in_memory=None)
 print(len(train_dataset), len(test_dataset))
 mlflow.end_run()
 
-batch_size = 8
-n_devices = 4
+batch_size = 64
+n_devices = 2
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
     n_devices = torch.cuda.device_count()
@@ -147,7 +147,8 @@ training_arguments = transformers.TrainingArguments(
     eval_steps=4000,
     save_steps=8000,
     learning_rate=1e-4,
-    fp16=True,
+    fp16=False,
+    bf16=True,
     eval_strategy="steps",
     output_dir=output_dir,
     optim="adamw_torch",
@@ -172,5 +173,6 @@ shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
+#trainer.train(output_dir + '/checkpoint-136000')
 
 

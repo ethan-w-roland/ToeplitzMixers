@@ -27,7 +27,7 @@ from collections import namedtuple
 from functools import partial, reduce
 
 from einops import rearrange, repeat
-
+from dotenv import load_dotenv
 
 # helper functions
 
@@ -398,9 +398,11 @@ class LinearTransformer(nn.Module):
                 shift_labels = labels[..., 1:].contiguous() 
                 loss = self.cel(shift_logits, shift_labels)
                 return loss, output
-
+load_dotenv()
+checkpoint_root = os.getenv("CHECKPOINT_ROOT")
+data_root = os.getenv("DATA_ROOT")
 device='cuda' if torch.cuda.is_available() else 'cpu'
-tokenizer = AutoTokenizer.from_pretrained(f"/home/bbadger/Desktop/tokenizer_fineweb_8k")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
@@ -424,27 +426,29 @@ model = LinearTransformerLM(
     blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
 )
 
+
 model = LinearTransformer(vocab_size, dim, model)
 print (model)
-train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
-test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
+train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 # descriptive name for output
-output_dir = '/home/bbadger/Desktop/fineweb_fullin_256_h4_n16_c512'
+output_dir = f'{checkpoint_root}/fineweb_fullin_256_h4_n16_c512'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
     num_train_epochs=3,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
     warmup_steps=500,
     eval_steps=4000,
     save_steps=4000,
-    learning_rate=1e-5, 
-    fp16=True, 
+    learning_rate=1e-4, 
+    fp16=False,
+    bf16=True, 
     eval_strategy='steps',
     output_dir=output_dir,
     optim='adamw_torch',

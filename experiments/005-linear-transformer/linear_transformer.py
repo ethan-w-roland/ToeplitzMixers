@@ -17,7 +17,7 @@ import warnings
 import shutil
 from transformers.models.longformer import LongformerModel
 from linear_attention_transformer import LinearAttentionTransformerLM
-
+from dotenv import load_dotenv
 warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
@@ -59,12 +59,14 @@ class LinearTransformer(nn.Module):
                 loss = self.cel(shift_logits, shift_labels)
                 return loss, output
 
-
-tokenizer = AutoTokenizer.from_pretrained(f"/home/bbadger/Desktop/tokenizer_fineweb_8k")
+load_dotenv()
+data_root = os.getenv("DATA_ROOT")
+checkpoint_root = os.getenv("CHECKPOINT_ROOT")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 512
+dim = 128
 context_length = 512
 n_layers = 16
 n_heads = 4
@@ -84,28 +86,30 @@ config_kwargs = {
 #print (model)
 model = LinearAttentionTransformerLM(
     num_tokens = 8000,
-    dim = 256,
-    heads = 4,
+    dim = dim,
+    heads = n_heads,
     depth = 16,
     max_seq_len = 512,
     causal = True,                  # auto-regressive or not
     ff_dropout = 0.,               # dropout for feedforward
     attn_layer_dropout = 0.,       # dropout right after self-attention layer
     attn_dropout = 0.,             # dropout post-attention
-    emb_dim = 256,                  # embedding factorization, to save on memory
-    dim_head = 128,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
+    emb_dim = dim,                  # embedding factorization, to save on memory
+    dim_head = dim // n_heads,                 # be able to fix the dimension of each head, making it independent of the embedding dimension and the number of heads
     blindspot_size = 1,            # this gives the q(kv) attention a blindspot of 64 tokens back in the causal case, but gives back an order of magnitude return in memory savings. should be paired with local attention of at least a window size of this setting. setting this to 1 will allow for full q(kv) attention of past
-    n_local_attn_heads = 4,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
+    n_local_attn_heads = 0,         # number of local attention heads for (qk)v attention. this can be a tuple specifying the exact number of local attention heads at that depth
     local_attn_window_size = 1,    # receptive field of the local attention
     reversible = False,              # use reversible nets, from Reformer paper
     ff_chunks = 1,                  # feedforward chunking, from Reformer paper
     ff_glu = False,                  # use GLU variant for feedforward
     attend_axially = False,         # will fold the sequence by the local attention window size, and do an extra strided attention followed by a feedforward with the cheap q(kv) attention
-    shift_tokens = False             # add single token shifting, for great improved convergence
+    shift_tokens = False,             # add single token shifting, for great improved convergence
+    use_toeplitz=False,
+    use_inverse=True
 )
 model = LinearTransformer(vocab_size, dim, model)
-train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
-test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
+train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 print (model)
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
@@ -114,25 +118,27 @@ test_dataset = load_from_disk(test_path)
 #test_dataset = test_dataset.rename_column('input_ids', 'x')
 print (train_dataset[0])
 # descriptive name for output
-output_dir = '/home/bbadger/Desktop/fineweb_linear_transformer_512_l0_c512'
+output_dir = f'{checkpoint_root}/finemath_linear_transformer_inv_128_n8_c512_b64x2'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
 	num_train_epochs=3,
-	per_device_train_batch_size=32,
-	per_device_eval_batch_size=32,
+	per_device_train_batch_size=64,
+	per_device_eval_batch_size=64,
         gradient_accumulation_steps=1,
 	warmup_steps=500,
 	eval_steps=4000,
-	save_steps=4000,
+	save_steps=8000,
 	learning_rate=2e-4, 
-	fp16=True, 
+	fp16=False,
+        bf16=True, 
 	eval_strategy='steps',
 	output_dir=output_dir,
 	optim='adamw_torch',
 	overwrite_output_dir=True,
 	max_steps=200000,
-        ddp_find_unused_parameters=True
+        ddp_find_unused_parameters=True,
+#	logging_steps=500,
 )
 
 trainer = transformers.Trainer(
@@ -151,4 +157,5 @@ shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
+#trainer.train(output_dir + '/checkpoint-28000')
 #trainer.train("/home/bbadger/Desktop/fineweb_linear_transformer_l64_512_c512/checkpoint-88000")

@@ -373,7 +373,7 @@ if __name__ == "__main__":
         eval_steps=4000,
         save_steps=8000,
         learning_rate=5e-4,
-        fp16=True,
+        bf16=True,
         eval_strategy="steps",
         output_dir=f"{checkpoint_root}/hyena_1024_n16_b64x2",
         optim="adamw_torch",
