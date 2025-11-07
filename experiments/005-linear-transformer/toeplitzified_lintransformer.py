@@ -60,10 +60,10 @@ class LinearAttentionToeplitz(nn.Module):
     def causal_linear_attn(self, q, k, v, W, eps=1e-3):
         bucket_size=1
         b, h, e, dtype = *q.shape, q.dtype
-        q = q.softmax(dim=-1)
+        #q = q.softmax(dim=-1)
         k = torch.exp(k).type(dtype).clone()
         toep_weight = torch.unsqueeze(self.weight, dim=-1) # toeplitz (per-token) weight injection into KV comp
-        v *= toep_weight
+        #v *= toep_weight
 
         q = q * e ** -0.5
 
@@ -72,12 +72,10 @@ class LinearAttentionToeplitz(nn.Module):
 
         b_k_sum = b_k.sum(dim=-2)
         b_k_cumsum = b_k_sum.cumsum(dim = -2).type(dtype)
-
-        context = einsum('bhnd,bhne->bhde', b_k, b_v)
+        context = einsum('bund,bune->bude', b_k, b_v)
         context = context.cumsum(dim = -3).type(dtype)
-
-        D_inv = 1. / einsum('bhd,bhnd->bhn', b_k_cumsum, b_q).clamp(min = eps)
-        attn = einsum('bhnd,bhde,bhn->bhne', b_q, context, D_inv)
+        D_inv = 1. / einsum('bud,bund->bun', b_k_cumsum, b_q).clamp(min = eps)
+        attn = einsum('bund,bude,bun->bune', b_q, context, D_inv)
         attn = attn.reshape(*q.shape)
         attn = self.out_proj(attn)
         return attn
@@ -260,10 +258,10 @@ tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 
-dim = 512
+dim = 256
 context_length = 512
-n_layers = 32
-n_heads = 4
+n_layers = 16
+n_heads = 1
 model = ToepLinTransformer(vocab_size, dim, context_length, n_layers, heads=n_heads)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
@@ -274,18 +272,18 @@ train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_lintranstoep_512_h4_c512_b32x4'
+output_dir = f'{checkpoint_root}/fineweb_lintranstoep_512_h4_c512_b16x4'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
 	num_train_epochs=3,
-	per_device_train_batch_size=32,
-	per_device_eval_batch_size=32,
-    gradient_accumulation_steps=1,
+	per_device_train_batch_size=8,
+	per_device_eval_batch_size=8,
+        gradient_accumulation_steps=1,
 	warmup_steps=500,
 	eval_steps=4000,
 	save_steps=8000,
-	learning_rate=2e-4, 
+	learning_rate=1e-4, 
 	fp16=True, 
 	eval_strategy='steps',
 	output_dir=output_dir,

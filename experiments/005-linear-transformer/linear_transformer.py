@@ -84,13 +84,14 @@ config_kwargs = {
 #configuration = LongformerConfig(**config_kwargs)
 #model = LinearTransformerModel(vocab_size, dim, LongformerModel(configuration))
 #print (model)
+
 model = LinearAttentionTransformerLM(
     num_tokens = 8000,
     dim = dim,
     heads = n_heads,
     depth = 16,
     max_seq_len = 512,
-    causal = True,                  # auto-regressive or not
+    causal = True,                 # auto-regressive or not
     ff_dropout = 0.,               # dropout for feedforward
     attn_layer_dropout = 0.,       # dropout right after self-attention layer
     attn_dropout = 0.,             # dropout post-attention
@@ -107,6 +108,7 @@ model = LinearAttentionTransformerLM(
     use_toeplitz=False,
     use_inverse=True
 )
+
 model = LinearTransformer(vocab_size, dim, model)
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -138,7 +140,7 @@ training_arguments = transformers.TrainingArguments(
 	overwrite_output_dir=True,
 	max_steps=200000,
         ddp_find_unused_parameters=True,
-#	logging_steps=500,
+        logging_steps=500
 )
 
 trainer = transformers.Trainer(

@@ -9,8 +9,9 @@ import mlflow
 import os
 from dotenv import load_dotenv
 
-from toep_mixer_multiheaded import MixerBlock
+from toep_mixer_multiheaded import MixerBlock as MixerBlock
 from frozen_toep_mixer_multiheaded import MixerBlock as FrozenMixerBlock
+from toep_mixer_multiconv import MixerBlock as MultiBLock
 
 class AutoencodingMixer(nn.Module):
 
@@ -62,7 +63,7 @@ class AutoencodingMixer(nn.Module):
 				).to(device)
 	
 
-		if frozen_toepliz:
+		if frozen_toeplitz:
 			self.decoderblocks = nn.ModuleList(
 					[FrozenMixerBlock(
 					hidden_dim = dim,
@@ -171,7 +172,9 @@ if __name__ == "__main__":
 	depth = 16
 	length = 512
 	compression=1     
-	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=4, compression=compression, frozen_toeplitz=True)
+	kernel=4
+	heads=None
+	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=heads, kernel=kernel, compression=compression, frozen_toeplitz=False)
 	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
 	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
@@ -188,19 +191,19 @@ if __name__ == "__main__":
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_autoencoding_frozentoep_mixer\
+	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_flat_k4\
 _{dim}\
 _n{depth}\
 _c{length}_b{batch_size}x{n_devices}'
 	
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=2,
-		per_device_train_batch_size=16,
-		per_device_eval_batch_size=16,
+		per_device_train_batch_size=batch_size,
+		per_device_eval_batch_size=batch_size,
 		warmup_steps=500,
 		eval_steps=4000,
 		save_steps=8000,
-		learning_rate=5e-4,
+		learning_rate=2e-4,
 		fp16=True,
 		eval_strategy="steps",
 		output_dir=output_dir,

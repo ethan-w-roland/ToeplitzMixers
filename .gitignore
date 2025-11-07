@@ -7,3 +7,6 @@ __pycache__
 *mlruns
 .env
 checkpoint*
+toep-venv
+*venv
+requirements.txt
