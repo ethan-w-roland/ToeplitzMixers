@@ -199,6 +199,7 @@ class MLPMixer(nn.Module):
         num_blocks: int,
         heads=None,
         expanded_convs=False,
+        copy=False,
         tie_io=False,
     ):
 
@@ -234,6 +235,7 @@ class MLPMixer(nn.Module):
 
         # Define loss function
         self.loss_fn = nn.CrossEntropyLoss()
+        self.copy = copy
 
     def _init_weights(self):
 
@@ -248,6 +250,11 @@ class MLPMixer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(self, input_ids, labels=None, **kwargs):
+        if self.copy:
+            input_ids = copy_dataset(input_ids)
+            if labels is not None:
+                labels = copy_dataset(labels)
+
         labels = labels[:, 1:].contiguous()
         x = self.input_layer(input_ids)
         for block in self.mixer_blocks:
@@ -265,13 +272,21 @@ class MLPMixer(nn.Module):
         else:
             return logits
 
+def copy_dataset(input_ids):
+    n_ctx = len(input_ids[0])
+    for i, input in enumerate(input_ids):
+        first_half = input[:n_ctx//2]
+        input = first_half + first_half
+        input_ids[i] = input
+    return input_ids
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 if __name__ == "__main__":
     load_dotenv()
     checkpoint_root = os.getenv('CHECKPOINT_ROOT')
     data_root = os.getenv('DATA_ROOT')
-    tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
+    tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
     tokenizer.pad_token = tokenizer.eos_token
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
@@ -282,14 +297,13 @@ if __name__ == "__main__":
     n_heads = None
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
     ).float()
 
-
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
-    output_dir = f"{checkpoint_root}/fineweb_flat_toep_128_n16_c512_b32x4"
+    output_dir = f"{checkpoint_root}/fineweb_copy_flat_toep_128_n16_c1024_b16x4"
 
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
