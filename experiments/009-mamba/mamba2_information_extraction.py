@@ -85,7 +85,7 @@ class TruncatedModel(nn.Module):
 
     def forward(self, x, **args):
         x = self.model.backbone(x, **args)
-        return output
+        return x
 
 load_dotenv()
 data_root = os.getenv('DATA_ROOT')
@@ -101,7 +101,7 @@ vocab_size=8000
 dim = 512 
 context_length = 512 
 n_layers = 16
-state_size = 512
+state_size = 256
 num_heads = 8
 head_dim = 128
 
@@ -126,9 +126,9 @@ encoder_model = Mamba2ForCausalLM(config)
 decoder_model = Mamba2Model(config)
 
 # load encoder
-safetensors.torch.load_model(encoder_model, f'{checkpoint_root}/fineweb_flat_toep_1024_n16_c512_b32/checkpoint-200000/model.safetensors')
+safetensors.torch.load_model(encoder_model, f'{checkpoint_root}/fineweb_mamba_512_s256_n16_c512_b64x2/checkpoint-200000/model.safetensors')
 
-encoder_model = TruncatedModel(encoder_model, autoencoder=False)
+encoder_model = TruncatedModel(encoder_model)
 model = UnrolledAutoencodingMamba(vocab_size, dim, encoder_model, decoder_model, tokenized_length=context_length, compression=1, random=False, freeze_encoder=True)
 
 print (model)
