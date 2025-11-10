@@ -10,3 +10,4 @@ checkpoint*
 toep-venv
 *venv
 requirements.txt
+*mamba-venv

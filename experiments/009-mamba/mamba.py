@@ -15,13 +15,16 @@ from safetensors import safe_open
 import datasets
 import warnings
 import shutil
-
+from dotenv import load_dotenv
 
 warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
+load_dotenv()
+checkpoint_root = os.getenv('CHECKPOINT_ROOT')
+data_root = os.getenv('DATA_ROOT')
 
-tokenizer = AutoTokenizer.from_pretrained(f"/home/bbadger/Desktop/tokenizer_fineweb_8k")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
@@ -53,17 +56,19 @@ model = Mamba2ForCausalLM(config)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"Number of trainable parameters: {trainable_params}")
 
-train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
-test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
+train_path = f"{data_root}/stack-tokenized-train-c1024-8k"
+test_path = f"{data_root}/stack-tokenized-test-c1024-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 print (model)
+total_length = 0
 print (train_dataset[0])
 # descriptive name for output
-batch_size = 16
-output_dir = f'/home/bbadger/Desktop/fineweb_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x4'
+batch_size = 32
+n_gpus = torch.cuda.device_count()
+output_dir = f'{data_root}/stack_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
@@ -72,9 +77,9 @@ training_arguments = transformers.TrainingArguments(
         per_device_eval_batch_size=batch_size,
         warmup_steps=500,
         eval_steps=4000,
-        save_steps=4000,
+        save_steps=8000,
         learning_rate=2e-4,
-        fp16=True,
+        bf16=True,
         eval_strategy='steps',
         output_dir=output_dir,
         optim='adamw_torch',
@@ -98,6 +103,7 @@ if not os.path.isdir(output_dir):
 shutil.copy(code_path, output_dir)
 
 model.train()
-trainer.train('/home/bbadger/Desktop/fineweb_mamba_256_s64_n16_c512_b16x4/checkpoint-16000')
+trainer.train()
+#trainer.train('/home/bbadger/Desktop/fineweb_mamba_256_s64_n16_c512_b16x4/checkpoint-16000')
 
 

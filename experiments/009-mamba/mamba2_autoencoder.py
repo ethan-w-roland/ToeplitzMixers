@@ -88,12 +88,12 @@ n_vocab = len(tokenizer)
 print("Vocab size: ", n_vocab)
 
 vocab_size=8000
-dim = 512 
+dim = 256
 context_length = 512 
 n_layers = 16
-state_size = 512
+state_size = 128
 num_heads = 8
-head_dim = 128
+head_dim = 64
 
 config_kwargs = {
     'hidden_size': dim,
@@ -118,11 +118,11 @@ decoder_model = Mamba2Model(config)
 model = UnrolledAutoencodingMamba(vocab_size, dim, encoder_model, decoder_model, tokenized_length=512, compression=1, random=False, freeze_encoder=False)
 print (model)
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
-test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 train_dataset = load_from_disk(train_path, keep_in_memory=None)
-test_dataset = load_from_disk(test_path, keep_in_memory=None)
+test_dataset = load_from_disk(test_path, keep_in_memory=None).take(10000)
 print(len(train_dataset), len(test_dataset))
 mlflow.end_run()
 
@@ -166,13 +166,13 @@ trainer = transformers.Trainer(
 )
 
 # save driver code snapshot in checkpoint dir
-code_path = os.path.abspath(__file__)
-if not os.path.isdir(output_dir):
-    os.mkdir(output_dir)
-shutil.copy(code_path, output_dir)
+#code_path = os.path.abspath(__file__)
+#if not os.path.isdir(output_dir):
+#    os.mkdir(output_dir)
+#shutil.copy(code_path, output_dir)
 
 model.train()
-trainer.train()
-#trainer.train(output_dir + '/checkpoint-136000')
-
+#trainer.train()
+trainer.train('/home/azureuser/fineweb_autoencoding_mamba2_256_s128_n16_c512_b64x2' + '/checkpoint-200000')
+#print (trainer.evaluate())
 
