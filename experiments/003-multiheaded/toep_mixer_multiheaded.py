@@ -254,7 +254,6 @@ class MLPMixer(nn.Module):
             input_ids = copy_dataset(input_ids)
             if labels is not None:
                 labels = copy_dataset(labels)
-
         labels = labels[:, 1:].contiguous()
         x = self.input_layer(input_ids)
         for block in self.mixer_blocks:
@@ -276,8 +275,8 @@ def copy_dataset(input_ids):
     n_ctx = len(input_ids[0])
     for i, input in enumerate(input_ids):
         first_half = input[:n_ctx//2]
-        input = first_half + first_half
-        input_ids[i] = input
+        copied_halves = torch.cat((first_half, first_half))
+        input_ids[i] = copied_halves
     return input_ids
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -291,19 +290,19 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 512
-    dim = 128
+    tokenized_length = 1024
+    dim = 512
     layers = 16
-    n_heads = None
+    n_heads = 4
 
     model = MLPMixer(
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
     ).float()
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
 
-    output_dir = f"{checkpoint_root}/fineweb_copy_flat_toep_128_n16_c1024_b16x4"
+    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
 
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
@@ -315,8 +314,8 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=32,
-        per_device_eval_batch_size=32,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
