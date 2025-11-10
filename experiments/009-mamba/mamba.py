@@ -25,18 +25,18 @@ tokenizer = AutoTokenizer.from_pretrained(f"/home/bbadger/Desktop/tokenizer_fine
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 256 
+dim = 1024
 context_length = 512 
 n_layers = 16
-state_size = 64
+state_size = 512
 num_heads = 8
-head_dim = 64
+head_dim = 256
 
 config_kwargs = {
     'hidden_size': dim,
     'intermediate_size': 4*dim,
     'num_hidden_layers': n_layers,
-    'num_attention_heads': 4,
+    'num_attention_heads': num_heads,
     'vocab_size': vocab_size,
     'state_size': state_size,
     'hidden_dropout_prob': 0,
@@ -50,7 +50,8 @@ config_kwargs = {
 config = Mamba2Config(**config_kwargs)
 
 model = Mamba2ForCausalLM(config)
-
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Number of trainable parameters: {trainable_params}")
 
 train_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
 test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"

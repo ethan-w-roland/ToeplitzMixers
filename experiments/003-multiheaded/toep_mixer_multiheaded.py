@@ -276,19 +276,21 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 1024
-    dim = 1024
+    tokenized_length = 512
+    dim = 128
     layers = 16
-    n_heads = 4
+    n_heads = None
 
     model = MLPMixer(
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
     ).float()
 
-    train_path = f"{data_root}/stack-tokenized-train-c1024-8k"
-    test_path = f"{data_root}/stack-tokenized-test-c1024-8k"
 
-    output_dir = f"{checkpoint_root}/stack_flat_toep_1024_n16_c1024_b16x4"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+
+    output_dir = f"{checkpoint_root}/fineweb_flat_toep_128_n16_c512_b32x4"
+
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -299,9 +301,8 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        gradient_accumulation_steps=2,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=32,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,

@@ -260,12 +260,14 @@ tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 print ('Vocab size: ', n_vocab)
 
-tokenized_length = 1024
+tokenized_length = 512
 dim = 1024
 layers = 16
 n_heads = 4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = MLPMixer(n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False).float()
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Number of trainable parameters: {trainable_params}")
 #count_parameters(model)
 train_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-train-c1024"
 test_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-test-c1024"

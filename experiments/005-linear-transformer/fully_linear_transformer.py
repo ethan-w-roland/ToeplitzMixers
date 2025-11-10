@@ -429,6 +429,7 @@ model = LinearTransformerLM(
 
 model = LinearTransformer(vocab_size, dim, model)
 print (model)
+
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
