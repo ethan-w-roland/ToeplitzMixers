@@ -59,7 +59,7 @@ test_path = f"/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
-
+print (model)
 print (train_dataset[0])
 # descriptive name for output
 batch_size = 16
