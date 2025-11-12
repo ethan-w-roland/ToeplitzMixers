@@ -147,6 +147,7 @@ class AutoencodingMixer(nn.Module):
 			embedding_stack = []
 			# sliding window unroll over hidden dim
 			for i in range(self.tokenized_length):
+				i %= self.dim
 				sliding_window = encoder_embedding[..., i:i+self.dim//2]
 				if i+self.dim//2 > self.dim:
 					residual = i+self.dim//2 - self.tokenized_length
@@ -199,23 +200,22 @@ if __name__ == '__main__':
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
 
-	tokenized_length = 512
-	dim = 1024
+	tokenized_length = 1024
+	dim = 512
 	layers = 16
-	n_heads = None
+	n_heads = 4
 
 	# frozen encoder init and load
 	encoder = MLPMixer(
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 	)
 	print (encoder)
-	#safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_toep_1024_n16_c512_b32/checkpoint-200000/model.safetensors')
+	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4/checkpoint-200000/model.safetensors')
 	frozen_encoder = TruncatedModel(encoder, autoencoder=False)
-
 
 	compression = 1
 	kernel=1
-	heads=None
+	heads=4
 	model = autoencoder = AutoencodingMixer(n_vocab,
 		dim, 
 		layers, 
@@ -228,8 +228,8 @@ if __name__ == '__main__':
 		frozen_encoder=frozen_encoder
 	)
 
-	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+	train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
+	test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
 
 	datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 	train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -239,21 +239,21 @@ if __name__ == '__main__':
 	print("training begun")
 	print(encoder)
 
-	batch_size = 32
+	batch_size = 16
 	n_devices = 4
 	# get number of devices (assumes that all visible devices are used for training)
 	if torch.cuda.is_available():
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_untrained_toep_information\
+	output_dir = f'{checkpoint_root}/fineweb_copy_information\
 	_{dim}\
 	_n{layers}\
 	_c{tokenized_length}_b{batch_size}x{n_devices}'
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=2,
-		per_device_train_batch_size=16,
-		per_device_eval_batch_size=16,
+		per_device_train_batch_size=batch_size,
+		per_device_eval_batch_size=batch_size,
 		warmup_steps=500,
 		eval_steps=4000,
 		save_steps=8000,
