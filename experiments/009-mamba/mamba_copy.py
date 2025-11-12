@@ -23,10 +23,12 @@ device = 'cuda' if torch.cuda.is_available else 'cpu'
 class MambaCLM(nn.Module):
    
    def __init__(self, model, dim, vocab_size, copy=False):
+       super().__init__()
        self.copy = copy
        self.model = model
        self.lm_head = nn.Linear(dim, vocab_size)
        self.vocab_size = vocab_size
+       self.loss_fn = nn.CrossEntropyLoss()
 
    def forward(self, input_ids, labels=None, **kwargs):
         if self.copy:
@@ -34,7 +36,7 @@ class MambaCLM(nn.Module):
             if labels is not None:
                 labels = copy_dataset(labels)
         labels = labels[:, 1:].contiguous()
-        x = self.model(input_ids)
+        x = self.model(input_ids).last_hidden_state
         logits = self.lm_head(x)
         logits = logits[:, :-1].contiguous()
 
@@ -60,7 +62,7 @@ load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
 
-tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
@@ -93,8 +95,8 @@ model = MambaCLM(model, dim, vocab_size, copy=True)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"Number of trainable parameters: {trainable_params}")
 
-train_path = f"{data_root}/fineweb-tokenized-train-c1024-8k"
-test_path = f"{data_root}/fineweb-tokenized-test-c1024-8k"
+train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
@@ -105,7 +107,7 @@ print (train_dataset[0])
 # descriptive name for output
 batch_size = 32
 n_gpus = torch.cuda.device_count()
-output_dir = f'{data_root}/stack_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
+output_dir = f'{data_root}/fineweb_mamba_copy_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
