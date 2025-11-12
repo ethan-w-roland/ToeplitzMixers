@@ -20,6 +20,8 @@ from dotenv import load_dotenv
 warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
+all_hammings = []
+
 class MambaCLM(nn.Module):
    
    def __init__(self, model, dim, vocab_size, copy=False):
@@ -31,15 +33,23 @@ class MambaCLM(nn.Module):
        self.loss_fn = nn.CrossEntropyLoss()
 
    def forward(self, input_ids, labels=None, **kwargs):
+        labels = torch.where(input_ids==1, -100, input_ids)
         if self.copy:
             input_ids = copy_dataset(input_ids)
             if labels is not None:
                 labels = copy_labels(labels)
         labels = labels[:, 1:].contiguous()
-        x = self.model(input_ids).last_hidden_state
+        x = self.model(input_ids, use_cache=True).last_hidden_state
         logits = self.lm_head(x)
         logits = logits[:, :-1].contiguous()
-
+        
+        global all_hammings
+        if not self.training:
+            all_hammings.append(hamming_eval(logits, labels))
+        if self.training and all_hammings: 
+            print (f'Hamming metric: {sum(all_hammings)/ len(all_hammings)}')
+            all_hammings = []
+        
         if labels is not None:
             logits = logits.view(-1, self.vocab_size)
             labels = labels.view(-1)
@@ -62,15 +72,17 @@ def copy_labels(labels):
     n_ctx = len(labels[0])
     for i, input in enumerate(labels):
         first_half = input[:n_ctx//2]
-        pad_half = torch.ones(first_half.shape) * -100
+        pad_half = torch.ones(first_half.shape).to(device) * -100
         halves = torch.cat((pad_half, first_half))
         labels[i] = halves
     return labels
 
-def hamming_metric(model_output, input_tokens, *args, **kwargs):
+@torch.no_grad()
+def hamming_eval(model_output, labels):
     total_metric = 0 
-    generated_tokens = torch.argmax(model_output[1], dim=1)
-    for i in range(len(generated_tokens)):
+    input_tokens = labels
+    generated_tokens = torch.argmax(model_output, dim=-1)
+    for i in range(len(generated_tokens)): # len(generated_tokens)
         # expects tokens to be pre-flattened
         assert len(input_tokens[i]) == len(generated_tokens[i])
         count, card = 0, 0
@@ -83,7 +95,31 @@ def hamming_metric(model_output, input_tokens, *args, **kwargs):
                 if input_tokens[i][j] in generated_tokens[i][j]:
                     count += 1
         total_metric += (card - count) / card
-    average_metric = torch.tensor([total_metric / len(generated_tokens)]).to(device)
+    average_metric = torch.tensor([total_metric / len(generated_tokens)])
+    return average_metric
+
+
+@torch.no_grad()
+def hamming_metric(eval_preds, *args, **kwargs):
+    total_metric = 0 
+    model_output, input_tokens = torch.tensor(eval_preds[0]).to(device), torch.tensor(eval_preds[1])[..., 1:].to(device)
+    model_output = model_output.reshape(input_tokens.shape[0], 1023, 8000)
+    generated_tokens = torch.argmax(model_output, dim=-1)
+    print (generated_tokens[0, 512:550], input_tokens[0, 512:550])
+    for i in range(len(generated_tokens)): # len(generated_tokens)
+        # expects tokens to be pre-flattened
+        assert len(input_tokens[i]) == len(generated_tokens[i])
+        count, card = 0, 0
+        pad_token = tokenizer.encode(tokenizer.pad_token)[-1] # will be [2]
+        for j in range(len(input_tokens[i])//2, len(input_tokens[i])): # starts at the half way point  
+            if input_tokens[i][j] == pad_token:
+                continue
+            else:
+                card += 1
+                if input_tokens[i][j] in generated_tokens[i][j]:
+                    count += 1
+        total_metric += (card - count) / card
+    average_metric = {'hamming_metric': torch.tensor([total_metric / len(generated_tokens)])}
     return average_metric
 
 load_dotenv()
@@ -127,8 +163,8 @@ train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024-8k"
 test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
-train_dataset = load_from_disk(train_path)
-test_dataset = load_from_disk(test_path)
+train_dataset = load_from_disk(train_path).select_columns(['input_ids'])
+test_dataset = load_from_disk(test_path).select_columns(['input_ids']).take(256)
 print (model)
 total_length = 0
 print (train_dataset[0])
@@ -152,7 +188,8 @@ training_arguments = transformers.TrainingArguments(
         optim='adamw_torch',
         overwrite_output_dir=True,
         max_steps=200000,
-        ddp_find_unused_parameters=True
+        ddp_find_unused_parameters=True,
+        remove_unused_columns=False
 )
 
 trainer = transformers.Trainer(
@@ -161,7 +198,7 @@ trainer = transformers.Trainer(
         eval_dataset=test_dataset,
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
-        compute_loss_func=hamming_metric
+        #compute_metrics=hamming_metric
 )
 
 # save driver code snapshot in checkpoint dir

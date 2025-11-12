@@ -122,7 +122,7 @@ test_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 train_dataset = load_from_disk(train_path, keep_in_memory=None)
-test_dataset = load_from_disk(test_path, keep_in_memory=None).take(10000)
+test_dataset = load_from_disk(test_path, keep_in_memory=None)
 print(len(train_dataset), len(test_dataset))
 mlflow.end_run()
 
