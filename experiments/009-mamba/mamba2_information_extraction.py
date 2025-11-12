@@ -126,7 +126,7 @@ encoder_model = Mamba2ForCausalLM(config)
 decoder_model = Mamba2Model(config)
 
 # load encoder
-safetensors.torch.load_model(encoder_model, f'{checkpoint_root}/fineweb_mamba_512_s256_n16_c512_b64x2/checkpoint-200000/model.safetensors')
+#safetensors.torch.load_model(encoder_model, f'{checkpoint_root}/fineweb_mamba_512_s256_n16_c512_b64x2/checkpoint-200000/model.safetensors')
 
 encoder_model = TruncatedModel(encoder_model)
 model = UnrolledAutoencodingMamba(vocab_size, dim, encoder_model, decoder_model, tokenized_length=context_length, compression=1, random=False, freeze_encoder=True)
@@ -148,7 +148,7 @@ if torch.cuda.is_available():
     n_devices = torch.cuda.device_count()
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_mamba2_information\
+output_dir = f'{checkpoint_root}/fineweb_mamba2_untrained_information\
 _{dim}\
 _s{state_size}\
 _n{n_layers}\
