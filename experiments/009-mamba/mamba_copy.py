@@ -34,7 +34,7 @@ class MambaCLM(nn.Module):
         if self.copy:
             input_ids = copy_dataset(input_ids)
             if labels is not None:
-                labels = copy_dataset(labels)
+                labels = copy_labels(labels)
         labels = labels[:, 1:].contiguous()
         x = self.model(input_ids).last_hidden_state
         logits = self.lm_head(x)
@@ -57,6 +57,34 @@ def copy_dataset(input_ids):
         copied_halves = torch.cat((first_half, first_half))
         input_ids[i] = copied_halves
     return input_ids
+
+def copy_labels(labels):
+    n_ctx = len(labels[0])
+    for i, input in enumerate(labels):
+        first_half = input[:n_ctx//2]
+        pad_half = torch.ones(first_half.shape) * -100
+        halves = torch.cat((pad_half, first_half))
+        labels[i] = halves
+    return labels
+
+def hamming_metric(model_output, input_tokens, *args, **kwargs):
+    total_metric = 0 
+    generated_tokens = torch.argmax(model_output[1], dim=1)
+    for i in range(len(generated_tokens)):
+        # expects tokens to be pre-flattened
+        assert len(input_tokens[i]) == len(generated_tokens[i])
+        count, card = 0, 0
+        pad_token = tokenizer.encode(tokenizer.pad_token)[-1] # will be [2]
+        for j in range(len(input_tokens[i])//2, len(input_tokens[i])): # starts at the half way point  
+            if input_tokens[i][j] == pad_token:
+                continue
+            else:
+                card += 1
+                if input_tokens[i][j] in generated_tokens[i][j]:
+                    count += 1
+        total_metric += (card - count) / card
+    average_metric = torch.tensor([total_metric / len(generated_tokens)]).to(device)
+    return average_metric
 
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
@@ -115,7 +143,7 @@ training_arguments = transformers.TrainingArguments(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         warmup_steps=500,
-        eval_steps=4000,
+        eval_steps=1000,
         save_steps=8000,
         learning_rate=2e-4,
         bf16=True,
@@ -133,6 +161,7 @@ trainer = transformers.Trainer(
         eval_dataset=test_dataset,
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
+        compute_loss_func=hamming_metric
 )
 
 # save driver code snapshot in checkpoint dir
