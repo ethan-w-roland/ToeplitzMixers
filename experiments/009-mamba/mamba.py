@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from datasets import load_dataset, load_from_disk
 import transformers
-from transformers import MambaConfig, Mamba2Config, MambaForCausalLM, Mamba2ForCausalLM
+from transformers import MambaConfig, Mamba2Config, MambaForCausalLM, Mamba2ForCausalLM, Mamba2Model
 from prettytable import PrettyTable
 from safetensors.torch import save_file
 from safetensors import safe_open
@@ -20,11 +20,31 @@ from dotenv import load_dotenv
 warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
-@torch.no_grad()
-def placeholder_metric(eval_preds, *args, **kwargs):
-    average_metric = {'placeholder': torch.tensor([0])}
-    return average_metric
 
+class MambaCLM(nn.Module):
+   
+   def __init__(self, model, dim, vocab_size):
+       super().__init__()
+       self.model = model
+       self.lm_head = nn.Linear(dim, vocab_size)
+       self.vocab_size = vocab_size
+       self.loss_fn = nn.CrossEntropyLoss()
+
+   def forward(self, input_ids, labels=None, **kwargs):
+        labels = labels[:, 1:].contiguous()
+        x = self.model(input_ids).last_hidden_state
+        logits = self.lm_head(x)
+        logits = logits[:, :-1].contiguous()
+        
+        if labels is not None:
+            logits = logits.view(-1, self.vocab_size)
+            labels = labels.view(-1)
+
+            loss = self.loss_fn(logits, labels)
+            return loss, logits
+        else:
+            return logits
+        
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
@@ -58,6 +78,9 @@ config_kwargs = {
 config = Mamba2Config(**config_kwargs)
 
 model = Mamba2ForCausalLM(config)
+
+model = Mamba2Model(config)
+model = MambaCLM(model, dim, vocab_size)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"Number of trainable parameters: {trainable_params}")
 
@@ -100,7 +123,6 @@ trainer = transformers.Trainer(
         eval_dataset=test_dataset,
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
-#       compute_metrics=placeholder_metric
 )
 
 # save driver code snapshot in checkpoint dir
