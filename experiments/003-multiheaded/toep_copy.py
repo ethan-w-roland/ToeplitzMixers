@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, LlamaForCausalLM, LlamaModel
 import datasets
 from datasets import load_from_disk
 import mlflow
@@ -328,6 +328,28 @@ def copy_labels(labels):
         labels[i] = halves
     return labels
 
+def init_llama():
+    decoder_dim = 512
+    context_length = 1024
+    n_layers = 16
+    n_heads = 4
+
+    vocab_size = 8000
+    llama_config_kwargs = {
+        'hidden_size': decoder_dim,
+        'intermediate_size': 4*decoder_dim,
+        'num_hidden_layers': n_layers,
+        'num_attention_heads': n_heads,
+        'vocab_size': vocab_size
+    }
+
+    # Initializing a LLaMA model
+    configuration = LlamaConfig(**llama_config_kwargs)
+
+    # Initializing a model from the llama-7b style configuration
+    model = LlamaForCausalLM(configuration).float()
+    return (model)
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 if __name__ == "__main__":
@@ -366,7 +388,7 @@ if __name__ == "__main__":
         per_device_eval_batch_size=16,
         warmup_steps=50,
         eval_steps=100,
-        save_steps=4000,
+        save_steps=10000,
         learning_rate=5e-4,
         fp16=True,
         eval_strategy="steps",
@@ -374,7 +396,7 @@ if __name__ == "__main__":
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=True,
-        max_steps=50000,
+        max_steps=10000,
     )
 
     trainer = transformers.Trainer(
