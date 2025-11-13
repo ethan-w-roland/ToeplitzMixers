@@ -20,6 +20,11 @@ from dotenv import load_dotenv
 warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
+@torch.no_grad()
+def placeholder_metric(eval_preds, *args, **kwargs):
+    average_metric = {'placeholder': 0}
+    return average_metric
+
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
@@ -95,6 +100,7 @@ trainer = transformers.Trainer(
         eval_dataset=test_dataset,
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
+        compute_metrics=placeholder_metric
 )
 
 # save driver code snapshot in checkpoint dir
