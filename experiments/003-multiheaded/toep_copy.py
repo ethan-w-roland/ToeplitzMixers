@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import shutil
 
 all_hammings = []
+hamming_log =[]
 
 class ToeplitzCausalLinear(nn.Module):
     """
@@ -265,6 +266,7 @@ class MLPMixer(nn.Module):
             all_hammings.append(hamming(logits, labels))
         if self.training and all_hammings: 
             print (f'Accuracy: {sum(all_hammings)/ len(all_hammings)}')
+            global hamming_log; hamming_log.append(sum(all_hammings)/ len(all_hammings))
             all_hammings = []
 
         if labels is not None:
@@ -352,7 +354,7 @@ if __name__ == "__main__":
     output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
-    test_dataset = load_from_disk(test_path, keep_in_memory=None).take(5000) #.filter(lambda x: x['input_ids'][-1] != 1).take(5000)
+    test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
     print(len(train_dataset), len(test_dataset))
     print (test_dataset[0])
     mlflow.end_run()
@@ -362,9 +364,9 @@ if __name__ == "__main__":
         num_train_epochs=2,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
-        warmup_steps=500,
-        eval_steps=500,
-        save_steps=8000,
+        warmup_steps=50,
+        eval_steps=100,
+        save_steps=4000,
         learning_rate=5e-4,
         fp16=True,
         eval_strategy="steps",
@@ -372,7 +374,7 @@ if __name__ == "__main__":
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=True,
-        max_steps=200000,
+        max_steps=50000,
     )
 
     trainer = transformers.Trainer(
@@ -391,3 +393,4 @@ if __name__ == "__main__":
 
     model.train()
     trainer.train()
+    print (hamming_log)
