@@ -22,7 +22,7 @@ device = 'cuda' if torch.cuda.is_available else 'cpu'
 
 @torch.no_grad()
 def placeholder_metric(eval_preds, *args, **kwargs):
-    average_metric = {'placeholder': 0}
+    average_metric = {'placeholder': torch.tensor([0])}
     return average_metric
 
 load_dotenv()
@@ -100,7 +100,7 @@ trainer = transformers.Trainer(
         eval_dataset=test_dataset,
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
-        compute_metrics=placeholder_metric
+#       compute_metrics=placeholder_metric
 )
 
 # save driver code snapshot in checkpoint dir
@@ -113,4 +113,4 @@ model.train()
 trainer.train()
 #trainer.train('/home/bbadger/Desktop/fineweb_mamba_256_s64_n16_c512_b16x4/checkpoint-16000')
 
-
+d
