@@ -40,7 +40,10 @@ class MambaCLM(nn.Module):
             if labels is not None:
                 labels = copy_labels(labels)
         labels = labels[:, 1:].contiguous()
-        x = self.model(input_ids, use_cache=True).last_hidden_state
+        if self.training:
+            x = self.model(input_ids, use_cache=True).last_hidden_state
+        else:
+            x = self.model(input_ids, use_cache=True).last_hidden_state
         logits = self.lm_head(x)
         logits = logits[:, :-1].contiguous()
         

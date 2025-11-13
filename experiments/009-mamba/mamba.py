@@ -32,7 +32,7 @@ class MambaCLM(nn.Module):
 
    def forward(self, input_ids, labels=None, **kwargs):
         labels = labels[:, 1:].contiguous()
-        x = self.model(input_ids).last_hidden_state
+        x = self.model(input_ids, use_cache=True).last_hidden_state
         logits = self.lm_head(x)
         logits = logits[:, :-1].contiguous()
         
@@ -53,12 +53,12 @@ tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 256
+dim = 512
 context_length = 512 
 n_layers = 16
-state_size = 128
+state_size = 256
 num_heads = 8
-head_dim = 64
+head_dim = 128
 
 config_kwargs = {
     'hidden_size': dim,
@@ -94,7 +94,7 @@ print (model)
 total_length = 0
 print (train_dataset[0])
 # descriptive name for output
-batch_size = 32
+batch_size = 64
 n_gpus = torch.cuda.device_count()
 output_dir = f'{data_root}/fineweb_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
 
@@ -104,7 +104,7 @@ training_arguments = transformers.TrainingArguments(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         warmup_steps=500,
-        eval_steps=500,
+        eval_steps=4000,
         save_steps=8000,
         learning_rate=2e-4,
         bf16=True,
