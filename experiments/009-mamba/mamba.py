@@ -28,12 +28,12 @@ tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 1024
+dim = 256
 context_length = 512 
 n_layers = 16
-state_size = 512
+state_size = 128
 num_heads = 8
-head_dim = 256
+head_dim = 64
 
 config_kwargs = {
     'hidden_size': dim,
@@ -56,8 +56,8 @@ model = Mamba2ForCausalLM(config)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"Number of trainable parameters: {trainable_params}")
 
-train_path = f"{data_root}/stack-tokenized-train-c1024-8k"
-test_path = f"{data_root}/stack-tokenized-test-c1024-8k"
+train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
@@ -68,7 +68,7 @@ print (train_dataset[0])
 # descriptive name for output
 batch_size = 32
 n_gpus = torch.cuda.device_count()
-output_dir = f'{data_root}/stack_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
+output_dir = f'{data_root}/fineweb_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
@@ -76,7 +76,7 @@ training_arguments = transformers.TrainingArguments(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         warmup_steps=500,
-        eval_steps=4000,
+        eval_steps=500,
         save_steps=8000,
         learning_rate=2e-4,
         bf16=True,
@@ -85,7 +85,8 @@ training_arguments = transformers.TrainingArguments(
         optim='adamw_torch',
         overwrite_output_dir=True,
         max_steps=200000,
-        ddp_find_unused_parameters=True
+        ddp_find_unused_parameters=True,
+        remove_unused_columns=True
 )
 
 trainer = transformers.Trainer(

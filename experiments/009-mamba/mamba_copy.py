@@ -21,6 +21,7 @@ warnings.filterwarnings(action='ignore')
 device = 'cuda' if torch.cuda.is_available else 'cpu'
 
 all_hammings = []
+hamming_log = []
 
 class MambaCLM(nn.Module):
    
@@ -45,9 +46,10 @@ class MambaCLM(nn.Module):
         
         global all_hammings
         if not self.training:
-            all_hammings.append(hamming_eval(logits, labels))
+            all_hammings.append(hamming(logits, labels))
         if self.training and all_hammings: 
             print (f'Hamming metric: {sum(all_hammings)/ len(all_hammings)}')
+            global hamming_log; hamming_log.append(sum(all_hammings)/ len(all_hammings))
             all_hammings = []
         
         if labels is not None:
@@ -59,6 +61,17 @@ class MambaCLM(nn.Module):
 
         else:
             return logits
+
+@torch.no_grad()
+def hamming(model_output, labels):
+    total_metric = 0
+    #ignore_list = [tokenizer.pad_token, tokenizer.encode(tokenizer.eos_token)[-1]]
+    input_tokens = labels
+    generated_tokens = torch.argmax(model_output, dim=-1)
+    nonpad_tokens = torch.where(labels != -100, 1, 0)
+    equal_tokens = torch.where(generated_tokens == labels, 1, 0) & nonpad_tokens
+    average_metric = torch.sum(equal_tokens) / torch.sum(nonpad_tokens)
+    return average_metric
 
 def copy_dataset(input_ids):
     n_ctx = len(input_ids[0])
@@ -130,12 +143,12 @@ tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 512
+dim = 256
 context_length = 1024
 n_layers = 16
-state_size = 256
+state_size = 128
 num_heads = 8
-head_dim = 128
+head_dim = 64
 
 config_kwargs = {
     'hidden_size': dim,
@@ -164,7 +177,7 @@ test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-8k"
 
 datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path).select_columns(['input_ids'])
-test_dataset = load_from_disk(test_path).select_columns(['input_ids']).take(256)
+test_dataset = load_from_disk(test_path).select_columns(['input_ids']).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
 print (model)
 total_length = 0
 print (train_dataset[0])
@@ -178,16 +191,16 @@ training_arguments = transformers.TrainingArguments(
         num_train_epochs=3,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        warmup_steps=500,
-        eval_steps=1000,
-        save_steps=8000,
+        warmup_steps=50,
+        eval_steps=100,
+        save_steps=10000,
         learning_rate=2e-4,
         bf16=True,
         eval_strategy='steps',
         output_dir=output_dir,
         optim='adamw_torch',
         overwrite_output_dir=True,
-        max_steps=200000,
+        max_steps=10000,
         ddp_find_unused_parameters=True,
         remove_unused_columns=False
 )
@@ -210,5 +223,5 @@ shutil.copy(code_path, output_dir)
 model.train()
 trainer.train()
 #trainer.train('/home/bbadger/Desktop/fineweb_mamba_256_s64_n16_c512_b16x4/checkpoint-16000')
-
+print (hamming_log)
 
