@@ -288,7 +288,7 @@ def hamming_eval(model_output, labels):
         count, card = 0, 0
         pad_token = tokenizer.encode(tokenizer.pad_token)[-1] # will be [2]
         for j in range(len(input_tokens[i])//2, len(input_tokens[i])): # starts at the half way point  
-            if input_tokens[i][j] == pad_token:
+            if input_tokens[i][j] == pad_token or input_tokens[i][j] == tokenizer.encode(tokenizer.eos_token)[-1]:
                 continue
             else:
                 card += 1
@@ -310,7 +310,7 @@ def copy_labels(labels):
     n_ctx = len(labels[0])
     for i, input in enumerate(labels):
         first_half = input[:n_ctx//2]
-        pad_half = torch.ones(first_half.shape) * -100
+        pad_half = torch.ones(first_half.shape).to(device) * -100
         halves = torch.cat((pad_half, first_half))
         labels[i] = halves
     return labels
@@ -337,11 +337,11 @@ if __name__ == "__main__":
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
-    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
     
+    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
-    test_dataset = load_from_disk(test_path, keep_in_memory=None)
+    test_dataset = load_from_disk(test_path, keep_in_memory=None).take(5000)
     print(len(train_dataset), len(test_dataset))
     mlflow.end_run()
     print("training begun")
@@ -351,7 +351,7 @@ if __name__ == "__main__":
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
         warmup_steps=500,
-        eval_steps=1000,
+        eval_steps=500,
         save_steps=8000,
         learning_rate=5e-4,
         fp16=True,
