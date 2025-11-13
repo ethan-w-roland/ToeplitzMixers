@@ -262,9 +262,9 @@ class MLPMixer(nn.Module):
 
         global all_hammings
         if not self.training:
-            all_hammings.append(hamming_eval(logits, labels))
+            all_hammings.append(hamming(logits, labels))
         if self.training and all_hammings: 
-            print (f'Hamming metric: {sum(all_hammings)/ len(all_hammings)}')
+            print (f'Accuracy: {sum(all_hammings)/ len(all_hammings)}')
             all_hammings = []
 
         if labels is not None:
@@ -276,6 +276,17 @@ class MLPMixer(nn.Module):
 
         else:
             return logits
+
+@torch.no_grad()
+def hamming(model_output, labels):
+    total_metric = 0
+    #ignore_list = [tokenizer.pad_token, tokenizer.encode(tokenizer.eos_token)[-1]]
+    input_tokens = labels
+    generated_tokens = torch.argmax(model_output, dim=-1)
+    nonpad_tokens = torch.where(labels != -100, 1, 0)
+    equal_tokens = torch.where(generated_tokens == labels, 1, 0) & nonpad_tokens
+    average_metric = torch.sum(equal_tokens) / torch.sum(nonpad_tokens)
+    return average_metric
 
 @torch.no_grad()
 def hamming_eval(model_output, labels):
@@ -341,8 +352,9 @@ if __name__ == "__main__":
     output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
-    test_dataset = load_from_disk(test_path, keep_in_memory=None).take(5000)
+    test_dataset = load_from_disk(test_path, keep_in_memory=None).take(5000) #.filter(lambda x: x['input_ids'][-1] != 1).take(5000)
     print(len(train_dataset), len(test_dataset))
+    print (test_dataset[0])
     mlflow.end_run()
     print("training begun")
     print(model)
