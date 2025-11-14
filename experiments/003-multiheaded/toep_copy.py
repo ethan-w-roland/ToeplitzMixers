@@ -9,6 +9,7 @@ import mlflow
 import os
 from dotenv import load_dotenv
 import shutil
+from frozen_toep_mixer_multiheaded import MLPMixer as FrozenMixer
 
 all_hammings = []
 hamming_log =[]
@@ -327,29 +328,6 @@ def copy_labels(labels):
         halves = torch.cat((pad_half, first_half))
         labels[i] = halves
     return labels
-
-def init_llama():
-    decoder_dim = 512
-    context_length = 1024
-    n_layers = 16
-    n_heads = 4
-
-    vocab_size = 8000
-    llama_config_kwargs = {
-        'hidden_size': decoder_dim,
-        'intermediate_size': 4*decoder_dim,
-        'num_hidden_layers': n_layers,
-        'num_attention_heads': n_heads,
-        'vocab_size': vocab_size
-    }
-
-    # Initializing a LLaMA model
-    configuration = LlamaConfig(**llama_config_kwargs)
-
-    # Initializing a model from the llama-7b style configuration
-    model = LlamaForCausalLM(configuration).float()
-    return (model)
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 if __name__ == "__main__":
@@ -364,16 +342,20 @@ if __name__ == "__main__":
     tokenized_length = 1024
     dim = 512
     layers = 16
-    n_heads = 4
+    n_heads = None
 
     model = MLPMixer(
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
     ).float()
 
+    #model = FrozenMixer(
+    #   n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
+    #).float()
+
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
     
-    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
+    output_dir = f"{checkpoint_root}/fineweb_copy_toep_h0_512_n16_c1024_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
@@ -386,6 +368,7 @@ if __name__ == "__main__":
         num_train_epochs=2,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
+        #gradient_accumulation_steps=2,
         warmup_steps=50,
         eval_steps=100,
         save_steps=10000,
@@ -407,6 +390,7 @@ if __name__ == "__main__":
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
     )
 
+    print (f'Output path: {output_dir}')
     # save driver code snapshot in checkpoint dir 
     code_path = os.path.abspath(__file__) 
     if not os.path.isdir(output_dir): 

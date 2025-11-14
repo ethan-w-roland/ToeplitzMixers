@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, LlamaConfig, LlamaModel
 import datasets
 from datasets import load_from_disk
 import mlflow
@@ -14,22 +14,24 @@ all_hammings = []
 hamming_log =[]
 
 class LlamaCLM(nn.Module):
-    def __init__(self, model, dim, n_vocab, copy=True):
+    def __init__(self, model, dim, vocab_size, copy=True):
         super().__init__()
         self.model = model
-        self.input_layer = nn.Embedding(n_vocab, dim)
-        self.output_layer = nn.Linear(dim, n_vocab)
+        self.input_layer = nn.Embedding(vocab_size, dim)
+        self.output_layer = nn.Linear(dim, vocab_size)
         self.copy = copy
+        self.vocab_size = vocab_size
+        self.loss_fn = nn.CrossEntropyLoss()
     
-    def forward(self, input_ids, labels=None, **kwargs):
+    def forward(self, input_ids, labels=None, attention_mask=None, **kwargs):
         if self.copy:
             input_ids = copy_dataset(input_ids)
+            attention_mask = copy_dataset(attention_mask)
             if labels is not None:
                 labels = copy_labels(labels) # masks first half
         labels = labels[:, 1:].contiguous()
-        x = self.input_layer(input_ids)
-        x = self.model(x)
-        logits = self.output_layer(x)
+        x = self.model(input_ids, attention_mask=attention_mask)
+        logits = self.output_layer(x.last_hidden_state)
         logits = logits[:, :-1].contiguous()
 
         global all_hammings
@@ -77,7 +79,7 @@ def copy_labels(labels):
     return labels
 
 def init_llama():
-    decoder_dim = 512
+    decoder_dim = 256
     context_length = 1024
     n_layers = 16
     n_heads = 4
@@ -95,7 +97,7 @@ def init_llama():
     configuration = LlamaConfig(**llama_config_kwargs)
 
     # Initializing a model from the llama-7b style configuration
-    model = LlamaForCausalLM(configuration).float()
+    model = LlamaModel(configuration).float()
     return (model)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -110,7 +112,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 1024
-    dim = 512
+    dim = 256
     layers = 16
     n_heads = 4
 
@@ -134,9 +136,9 @@ if __name__ == "__main__":
         num_train_epochs=2,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
-        warmup_steps=500,
-        eval_steps=4000,
-        save_steps=8000,
+        warmup_steps=50,
+        eval_steps=100,
+        save_steps=10000,
         learning_rate=2e-4,
         fp16=True,
         eval_strategy="steps",
@@ -144,8 +146,8 @@ if __name__ == "__main__":
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=True,
-        max_steps=200000,
-    )
+        max_steps=10000,
+   )
 
     trainer = transformers.Trainer(
         model=model.to("cuda"),  # pre-assignment for FSDP initialization

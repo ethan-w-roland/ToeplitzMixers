@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import shutil
 # define a MLP Mixer based causal-language-model using weight masking
 
+all_hammings = []
+hamming_log = []
 
 class ToeplitzCausalLinear(nn.Module):
     """
@@ -199,6 +201,7 @@ class MLPMixer(nn.Module):
         heads=None,
         expanded_convs=False,
         tie_io=False,
+        copy = False
     ):
 
         super(MLPMixer, self).__init__()
@@ -233,6 +236,7 @@ class MLPMixer(nn.Module):
 
         # Define loss function
         self.loss_fn = nn.CrossEntropyLoss()
+        self.copy = copy 
 
     def _init_weights(self):
 
@@ -247,12 +251,23 @@ class MLPMixer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(self, input_ids, labels=None, **kwargs):
+        if self.copy:
+            input_ids = copy_dataset(input_ids)
+            labels = copy_labels(labels)
         labels = labels[:, 1:].contiguous()
         x = self.input_layer(input_ids)
         for block in self.mixer_blocks:
             x = block(x)
         logits = self.output_layer(x)
         logits = logits[:, :-1].contiguous()
+        global all_hammings
+        if not self.training:
+            all_hammings.append(hamming(logits, labels))
+        if self.training and all_hammings: 
+            print (f'Accuracy: {sum(all_hammings)/ len(all_hammings)}')
+            global hamming_log; hamming_log.append(sum(all_hammings)/ len(all_hammings))
+            print (hamming_log)
+            all_hammings = []
 
         if labels is not None:
             logits = logits.view(-1, self.vocab_size)
@@ -263,6 +278,35 @@ class MLPMixer(nn.Module):
 
         else:
             return logits
+
+def copy_dataset(input_ids):
+    n_ctx = len(input_ids[0])
+    for i, input in enumerate(input_ids):
+        first_half = input[:n_ctx//2]
+        copied_halves = torch.cat((first_half, first_half))
+        input_ids[i] = copied_halves
+    return input_ids
+
+def copy_labels(labels):
+    n_ctx = len(labels[0])
+    for i, input in enumerate(labels):
+        first_half = input[:n_ctx//2]
+        pad_half = torch.ones(first_half.shape).to(device) * -100
+        halves = torch.cat((pad_half, first_half))
+        labels[i] = halves
+    return labels
+
+@torch.no_grad()
+def hamming(model_output, labels):
+    total_metric = 0
+    #ignore_list = [tokenizer.pad_token, tokenizer.encode(tokenizer.eos_token)[-1]]
+    input_tokens = labels
+    generated_tokens = torch.argmax(model_output, dim=-1)
+    nonpad_tokens = torch.where(labels != -100, 1, 0)
+    equal_tokens = torch.where(generated_tokens == labels, 1, 0) & nonpad_tokens
+    average_metric = torch.sum(equal_tokens) / torch.sum(nonpad_tokens)
+    return average_metric
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
