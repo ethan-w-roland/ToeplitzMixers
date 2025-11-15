@@ -125,9 +125,10 @@ class AutoencodingMixer(nn.Module):
 			embedding_stack = []
 			# sliding window unroll over hidden dim
 			for i in range(self.tokenized_length):
+				i %= self.dim
 				sliding_window = encoder_embedding[..., i:i+self.dim//2]
 				if i+self.dim//2 > self.dim:
-					residual = i+self.dim//2 - self.tokenized_length
+					residual = i+self.dim//2 - self.dim
 					# loop around to first index
 					sliding_window = torch.cat((sliding_window, encoder_embedding[..., :residual]), dim=2)
 				embedding_stack.append(sliding_window)
@@ -168,12 +169,12 @@ if __name__ == "__main__":
 	print("Vocab size: ", n_vocab)
 
 	vocab_size = 8000
-	dim = 512
+	dim = 256
 	depth = 16
 	length = 512
 	compression=1     
-	kernel=4
-	heads=None
+	kernel=1
+	heads=4
 	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=heads, kernel=kernel, compression=compression, frozen_toeplitz=False)
 	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
 	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
@@ -191,7 +192,7 @@ if __name__ == "__main__":
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_flat_k4\
+	output_dir = f'{checkpoint_root}/fineweb_autoencoding_toep_h4\
 _{dim}\
 _n{depth}\
 _c{length}_b{batch_size}x{n_devices}'

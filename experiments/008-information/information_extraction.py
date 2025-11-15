@@ -200,7 +200,7 @@ if __name__ == '__main__':
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
 
-	tokenized_length = 1024
+	tokenized_length = 512
 	dim = 512
 	layers = 16
 	n_heads = 4
@@ -210,7 +210,7 @@ if __name__ == '__main__':
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 	)
 	print (encoder)
-	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4/checkpoint-200000/model.safetensors')
+	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_h4_toep_512_n16_c512_b32x4/checkpoint-200000/model.safetensors')
 	frozen_encoder = TruncatedModel(encoder, autoencoder=False)
 
 	compression = 1
@@ -228,8 +228,8 @@ if __name__ == '__main__':
 		frozen_encoder=frozen_encoder
 	)
 
-	train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-	test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
+	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
 	datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 	train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -239,7 +239,7 @@ if __name__ == '__main__':
 	print("training begun")
 	print(encoder)
 
-	batch_size = 16
+	batch_size = 32
 	n_devices = 4
 	# get number of devices (assumes that all visible devices are used for training)
 	if torch.cuda.is_available():
