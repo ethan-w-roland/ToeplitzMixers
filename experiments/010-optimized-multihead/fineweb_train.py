@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 import shutil
 # define a MLP Mixer based causal-language-model using weight masking
-from mixer import MultiHeadMixer, Config
+from mixer import MLPMixer, Config
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class MLPMixer(nn.Module):
@@ -37,18 +37,7 @@ class MLPMixer(nn.Module):
         # Input Embedding
         self.input_layer = nn.Embedding(vocab_size, hidden_dim)
 
-        mixer_config = Config(
-            vocab_size=vocab_size,
-            embed_dim=dim,
-            seq_len=seq_len,
-            num_heads=n_heads,
-            mlp_dim=dim,
-            dropout=0.,
-            do_toep_mean=False,
-            do_toep_proj=True,
-            parallel_mixer=True,
-            num_blocks=num_blocks
-        )
+        c
 
         # Mixer Blocks
         self.mixer_blocks = nn.ModuleList(
@@ -117,9 +106,20 @@ if __name__ == "__main__":
     layers = 16
     n_heads = 4
 
-    model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
-    ).float()
+    config = Config(
+            vocab_size=vocab_size,
+            embed_dim=dim,
+            seq_len=seq_len,
+            num_heads=n_heads,
+            mlp_dim=dim,
+            dropout=0.,
+            do_toep_mean=False,
+            do_toep_proj=True,
+            parallel_mixer=True,
+            num_blocks=num_blocks
+        )
+
+    model = MLPMixer(config).float()
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
