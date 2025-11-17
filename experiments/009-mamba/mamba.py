@@ -49,16 +49,16 @@ load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
 
-tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_stack_8k")
+tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
 vocab_size = len(tokenizer)
 print (vocab_size)
-dim = 512
-context_length = 512 
+dim = 1024
+context_length = 512
 n_layers = 16
-state_size = 256
+state_size = 512
 num_heads = 8
-head_dim = 128
+head_dim = 256
 
 config_kwargs = {
     'hidden_size': dim,
@@ -96,7 +96,7 @@ print (train_dataset[0])
 # descriptive name for output
 batch_size = 64
 n_gpus = torch.cuda.device_count()
-output_dir = f'{data_root}/fineweb_mamba_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
+output_dir = f'{data_root}/fineweb_mamba_cache_{dim}_s{state_size}_n{n_layers}_c{context_length}_b{batch_size}x{n_gpus}'
 
 mlflow.end_run()
 training_arguments = transformers.TrainingArguments(
@@ -124,7 +124,7 @@ trainer = transformers.Trainer(
         args=training_arguments,
         data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
 )
-
+print (f'Saving results to {output_dir}')
 # save driver code snapshot in checkpoint dir
 code_path = os.path.abspath(__file__)
 if not os.path.isdir(output_dir):
@@ -133,6 +133,6 @@ shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
-#trainer.train('/home/bbadger/Desktop/fineweb_mamba_256_s64_n16_c512_b16x4/checkpoint-16000')
+#trainer.train(f'{output_dir}/checkpoint-128000')
 
-d
+
