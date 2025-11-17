@@ -41,17 +41,18 @@ class MLPMixer(nn.Module):
             vocab_size=vocab_size,
             embed_dim=dim,
             seq_len=seq_len,
-            num_heads=num_heads,
+            num_heads=n_heads,
             mlp_dim=dim,
             dropout=0.,
             do_toep_mean=False,
             do_toep_proj=True,
             parallel_mixer=True,
+            num_blocks=num_blocks
         )
 
         # Mixer Blocks
         self.mixer_blocks = nn.ModuleList(
-            [MultiHeadMixer(config) for _ in range(num_blocks)]
+            [MultiHeadMixer(mixer_config) for _ in range(num_blocks)]
         )
 
         # Output Layer
@@ -71,7 +72,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
+            if isinstance(m, nn.Linear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -124,7 +125,7 @@ if __name__ == "__main__":
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
     total_batch_size = 128
-    n_gpus = torch.cuda.device_count
+    n_gpus = torch.cuda.device_count()
     batch_size = total_batch_size // n_gpus
 
     output_dir = f"{checkpoint_root}/fineweb_toep_parallel_h{n_heads}_{dim}_n{layers}_b{batch_size}x{n_gpus}"

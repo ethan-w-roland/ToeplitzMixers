@@ -14,6 +14,7 @@ class Config:
     mlp_dim: int
     dropout: float
     do_toep_mean: bool
+    do_toep_proj: bool = True
     parallel_mixer: bool = True
 
 
