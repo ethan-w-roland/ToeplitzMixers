@@ -91,7 +91,7 @@ class MultiHeadMixer(nn.Module):
         x = x.view(B, H, D, S)
 
         if parallel:
-            
+                
             # Create Toeplitz matrices for all heads: (H, S, S)
             # Use only the first S weights to match actual sequence length
             W = vector_to_matrix(self.weight[:, :S])
