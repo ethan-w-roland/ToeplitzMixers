@@ -13,85 +13,6 @@ import shutil
 from mixer import MLPMixer, Config
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-class MLPMixer(nn.Module):
-
-    def __init__(
-        self,
-        vocab_size: int,
-        hidden_dim: int,
-        seq_len: int,
-        num_blocks: int,
-        heads=None,
-        expanded_convs=False,
-        copy=False,
-        tie_io=False,
-    ):
-
-        super(MLPMixer, self).__init__()
-
-        self.vocab_size = vocab_size
-        self.hidden_dim = hidden_dim
-        self.seq_len = seq_len
-        self.num_blocks = num_blocks
-
-        # Input Embedding
-        self.input_layer = nn.Embedding(vocab_size, hidden_dim)
-
-        c
-
-        # Mixer Blocks
-        self.mixer_blocks = nn.ModuleList(
-            [MultiHeadMixer(mixer_config) for _ in range(num_blocks)]
-        )
-
-        # Output Layer
-        self.output_layer = nn.Linear(hidden_dim, vocab_size, bias=False)
-
-        # Tie input and output layer weights
-        if tie_io:
-            self.output_layer.weight = self.input_layer.weight
-
-        # Initialize weights
-        self._init_weights()
-
-        # Define loss function
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.copy = copy
-
-    def _init_weights(self):
-
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                # Kaiming He initialization for Swish activation
-                nn.init.kaiming_normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-
-    def count_params(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def forward(self, input_ids, labels=None, **kwargs):
-        if self.copy:
-            input_ids = copy_dataset(input_ids)
-            if labels is not None:
-                labels = copy_dataset(labels)
-        labels = labels[:, 1:].contiguous()
-        x = self.input_layer(input_ids)
-        for block in self.mixer_blocks:
-            x = block(x)
-        logits = self.output_layer(x)
-        logits = logits[:, :-1].contiguous()
-
-        if labels is not None:
-            logits = logits.view(-1, self.vocab_size)
-            labels = labels.view(-1)
-
-            loss = self.loss_fn(logits, labels)
-            return loss, logits
-
-        else:
-            return logits
-
 if __name__ == "__main__":
     load_dotenv()
     checkpoint_root = os.getenv('CHECKPOINT_ROOT')
@@ -101,6 +22,7 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
+    vocab_size = n_vocab
     tokenized_length = 512
     dim = 512
     layers = 16
@@ -109,14 +31,14 @@ if __name__ == "__main__":
     config = Config(
             vocab_size=vocab_size,
             embed_dim=dim,
-            seq_len=seq_len,
+            seq_len=tokenized_length,
             num_heads=n_heads,
-            mlp_dim=dim,
+            mlp_dim=dim*4,
             dropout=0.,
             do_toep_mean=False,
             do_toep_proj=True,
             parallel_mixer=True,
-            num_blocks=num_blocks
+            num_blocks=layers
         )
 
     model = MLPMixer(config).float()
@@ -145,7 +67,7 @@ if __name__ == "__main__":
         eval_steps=4000,
         save_steps=8000,
         learning_rate=5e-4,
-        fp16=True,
+        bf16=True,
         eval_strategy="steps",
         output_dir=output_dir,
         optim="adamw_torch",
