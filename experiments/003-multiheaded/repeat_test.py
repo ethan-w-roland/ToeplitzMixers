@@ -11,12 +11,7 @@ from dotenv import load_dotenv
 import shutil
 # define a MLP Mixer based causal-language-model using weight masking
 
-
-class ToeplitzCausalLinear(nn.Module):
-    """
-    A linear layer with a triangular (causal) mask applied to the weight matrix.
-    This ensures each position i cannot use info from positions > i.
-    """
+class RepeatCausalLinear(nn.Module):
 
     def __init__(self, dim: int):
 
@@ -28,15 +23,10 @@ class ToeplitzCausalLinear(nn.Module):
 
     def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
         """
-        Given a vector v of shape (m,), returns an (m x m) matrix M
-        where M[i, j] = v[j - i] if j >= i, and 0 otherwise.
-
-        For example, if v = [a, b, c, d] then M will be:
-
-        [ a  b  c  d ]
-        [ 0  a  b  c ]
-        [ 0  0  a  b ]
-        [ 0  0  0  a ]
+        [ a  a  a  a ]
+        [ 0  b  b  b ]
+        [ 0  0  c  c ]
+        [ 0  0  0  d ]
         """
         v = v.reshape(-1)  # Ensure v is a 1D tensor
         m = v.shape[0]
@@ -46,9 +36,8 @@ class ToeplitzCausalLinear(nn.Module):
             torch.arange(m, device=v.device),
             indexing="ij",
         )
-        # j - i gives the offset into v. When j < i, we want a 0.
         M = torch.where(
-            j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
+            j >= i, v[i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
         )
         return M
 
@@ -65,7 +54,7 @@ class ToeplitzCausalLinear(nn.Module):
         return out
 
 
-class ToeplitzHeads(nn.Module):
+class RepeatHeads(nn.Module):
 
     def __init__(
         self,
@@ -172,7 +161,7 @@ class MixerBlock(nn.Module):
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+                self.token_mixing_layer = RepeatCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -240,7 +229,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
+            if isinstance(m, nn.Linear) or isinstance(m, RepeatCausalLinear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -290,19 +279,18 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 1024
+    tokenized_length = 512
     dim = 512
     layers = 16
-    n_heads = 4
+    n_heads = None
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
     ).float()
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
-
-    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    output_dir = f"{checkpoint_root}/fineweb_h{n_heads}_repeat_512_n16_c512_b32x4"
 
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
@@ -314,8 +302,8 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
