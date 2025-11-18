@@ -210,7 +210,7 @@ if __name__ == '__main__':
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False
 	)
 	print (encoder)
-	safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_h4_toep_512_n16_c512_b32x4/checkpoint-200000/model.safetensors')
+	#safetensors.torch.load_model(encoder, f'{checkpoint_root}/fineweb_flat_h4_toep_512_n16_c512_b32x4/checkpoint-200000/model.safetensors')
 	frozen_encoder = TruncatedModel(encoder, autoencoder=False)
 
 	compression = 1
@@ -224,7 +224,7 @@ if __name__ == '__main__':
 		n_heads=heads, 
 		kernel=kernel, 
 		unroll=True, 
-		random=False, 
+		random=False,
 		frozen_encoder=frozen_encoder
 	)
 
@@ -246,10 +246,10 @@ if __name__ == '__main__':
 		n_devices = torch.cuda.device_count()
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_copy_information\
-	_{dim}\
-	_n{layers}\
-	_c{tokenized_length}_b{batch_size}x{n_devices}'
+	output_dir = f'{checkpoint_root}/fineweb_untrained_information\
+_{dim}\
+_n{layers}\
+_c{tokenized_length}_b{batch_size}x{n_devices}'
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=2,
 		per_device_train_batch_size=batch_size,
