@@ -1,5 +1,6 @@
 import torch
 from einops import rearrange
+import torch.nn as nn
 
 class ToeplitzHeads(nn.Module):
 
@@ -132,21 +133,19 @@ def forward(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> torch.
     return hidden_layer
 
 
-def parallel_forward(x, weight, bias):
+def parallel_forward(x, weight, bias, n_heads=3):
     activations = []
     x = rearrange(x, "b e t -> b t e")
-   
     headed_projection = x # mock in projection
-    projections = rearrange(projection, "b t e -> b h e t", h=self.n_heads)
-    conv_projections = self.mixer_heads(projections)
-    rearranged_conv = rearrange(conv_projection, "b h e t -> b e t", h=self.n_heads)
-    hidden_layer =  hidden_layer 
-    hidden_layer = rearrange(hidden_layer, "b t e -> b e t")
-    return hidden_layer
+    projections = rearrange(headed_projection, "b t (h e) -> (b h) e t", h=n_heads)
+    conv_projection = torch.bmm(projections, weight)
+    rearranged_conv = rearrange(conv_projection, "(b h) e t -> b (h e) t", h=n_heads)
+    return rearranged_conv
 
 
 # weight = torch.tensor([[1,2,3,4], [2,4,6,8]]).to(torch.float)
-weight = torch.tensor([[1,2,3,4], [2,4,6,8], [3,4,5,6],[4,3,2,1]]).to(torch.float)
+# weight = torch.tensor([[1,2,3,4], [2,4,6,8], [3,4,5,6],[4,3,2,1]]).to(torch.float)
+weight = torch.randn(3, 4, 4)
 bias = torch.zeros(weight[1].shape)
 x = torch.randn((1, 6, 4)).to(torch.float) # [b e t]
 pout = parallel_forward(x, weight, bias)
