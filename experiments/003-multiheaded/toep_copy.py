@@ -14,6 +14,49 @@ from frozen_toep_mixer_multiheaded import MLPMixer as FrozenMixer
 all_hammings = []
 hamming_log =[]
 
+class RepeatCausalLinear(nn.Module):
+
+    def __init__(self, dim: int):
+
+        super().__init__()
+
+        # Standard weight + bias
+        self.weight = nn.Parameter(torch.randn(1, dim))
+        self.bias = nn.Parameter(torch.zeros(dim))
+
+    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
+        """
+        [ a  a  a  a ]
+        [ 0  b  b  b ]
+        [ 0  0  c  c ]
+        [ 0  0  0  d ]
+        """
+        v = v.reshape(-1)  # Ensure v is a 1D tensor
+        m = v.shape[0]
+        # Create index grids for rows and columns
+        i, j = torch.meshgrid(
+            torch.arange(m, device=v.device),
+            torch.arange(m, device=v.device),
+            indexing="ij",
+        )
+        M = torch.where(
+            j >= i, v[i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
+        )
+        return M
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x shape: (batch, embed_dim, seq_len)
+        """
+        B, E, S = x.shape
+        W = self.vector_to_matrix(self.weight)
+        x_reshaped = x.reshape(B * E, S)  # (B*E, S)
+        out = x_reshaped @ W  # (B*E, S)
+        out = out + self.bias  # broadcast bias
+        out = out.view(B, E, S)  # reshape back
+        return out
+
+
 class ToeplitzCausalLinear(nn.Module):
     """
     A linear layer with a triangular (causal) mask applied to the weight matrix.
@@ -100,7 +143,7 @@ class ToeplitzHeads(nn.Module):
             )
         else:
             self.mixer_heads = nn.ModuleList(
-                [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                [RepeatCausalLinear(seq_len) for i in range(n_heads)]
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -173,7 +216,7 @@ class MixerBlock(nn.Module):
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+                self.token_mixing_layer = RepeatCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -241,7 +284,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
+            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear) or isinstance(m, RepeatCausalLinear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -340,8 +383,8 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 1024
-    dim = 4
-    layers = 8
+    dim = 1024
+    layers = 16
     n_heads = None
 
     model = MLPMixer(
@@ -355,7 +398,7 @@ if __name__ == "__main__":
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
     
-    output_dir = f"{checkpoint_root}/fineweb_copy_toep_h0_4_n8_c1024_b128x4"
+    output_dir = f"{checkpoint_root}/fineweb_copy_repeat_h0_{dim}_n{layers}_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
@@ -366,12 +409,12 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=64,
-        per_device_eval_batch_size=64,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
         #gradient_accumulation_steps=2,
         warmup_steps=50,
-        eval_steps=4000,
-        save_steps=8000,
+        eval_steps=100,
+        save_steps=10000,
         learning_rate=5e-4,
         fp16=True,
         eval_strategy="steps",
@@ -379,7 +422,7 @@ if __name__ == "__main__":
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=True,
-        max_steps=200000,
+        max_steps=10000,
     )
 
     trainer = transformers.Trainer(
