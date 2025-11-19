@@ -287,12 +287,12 @@ if __name__ == "__main__":
     model = MLPMixer(
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
     ).float()
-    total_batch_size = 64
     n_gpus = torch.cuda.device_count()
+    total_batch_size = 128
     batch_size = total_batch_size // n_gpus
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
-    output_dir = f"{checkpoint_root}/fineweb_h{n_heads}_repeat_copy_512_n16_c1024_b{batch_size}x{n_gpus}"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
+    output_dir = f"{checkpoint_root}/fineweb_h{n_heads}_repeat_{dim}_n{layers}_c512_b{batch_size}x{n_gpus}"
 
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
@@ -310,7 +310,7 @@ if __name__ == "__main__":
         eval_steps=100,
         save_steps=10000,
         learning_rate=5e-4,
-        fp16=True,
+        bf16=True,
         eval_strategy="steps",
         output_dir=output_dir,
         optim="adamw_torch",
