@@ -40,12 +40,12 @@ class MLPMixer(nn.Module):
         self.input_layer = nn.Embedding(vocab_size, hidden_dim)
 
         # Mixer Blocks
-        self.mixerblocks = nn.ModuleList(
+        self.mixer_blocks = nn.ModuleList(
             [HyenaModule(
                 hidden_dim, 
                 seq_len, 
                 )
-            for i in range(depth)]
+            for i in range(num_blocks)]
             )
 
         # Output Layer
@@ -65,7 +65,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
+            if isinstance(m, nn.Linear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 1024
-    dim = 512
+    dim = 256
     layers = 16
     n_heads = None
 
@@ -180,13 +180,13 @@ if __name__ == "__main__":
     #).float()
 
     total_batch_size = 64
-    n_gpus = torch.cuda.device_count()\
+    n_gpus = torch.cuda.device_count()
     batch_size = total_batch_size // n_gpus
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
     
-    output_dir = f"{checkpoint_root}/fineweb_copy_hyena_{dim}_n{layer}_b{batch_size}x{n_gpus}"
+    output_dir = f"{checkpoint_root}/fineweb_copy_hyena_{dim}_n{layers}_b{batch_size}x{n_gpus}"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         output_dir=output_dir,
         optim="adamw_torch",
         overwrite_output_dir=True,
-        save_safetensors=True,
+        save_safetensors=False,
         max_steps=10000,
     )
 

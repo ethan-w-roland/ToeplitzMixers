@@ -383,7 +383,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 1024
-    dim = 1024
+    dim = 128
     layers = 16
     n_heads = None
 
