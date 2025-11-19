@@ -9,7 +9,7 @@ import mlflow
 import os
 from dotenv import load_dotenv
 
-from hyena_trainer_fineweb import HyenaModule
+from hyena_trainer_fineweb import HyenaModel, HyenaModule
 
 class AutoencodingMixer(nn.Module):
 
@@ -25,7 +25,7 @@ class AutoencodingMixer(nn.Module):
 			random=False, 
 			frozen_encoder=None, 
 			clm_encoder=False,
-			frozen_toeplitz=True
+			frozen_toeplitz=False
 		):
 		super().__init__()
 		self.double_tokens = double_tokens
@@ -38,18 +38,18 @@ class AutoencodingMixer(nn.Module):
 			# enforce no grad on encoder
 			for _, param in frozen_encoder.named_parameters():
 				param.requires_grad = False
-			self.encoderblocks = frozen_encoder.model_blocks.to(device)
+			self.encoderblocks = frozen_encoder.mixerblocks.to(device)
 
 		else:
 			# Mixer Blocks
-        	self.mixer_blocks = nn.ModuleList(
-	            [HyenaModule(
-	                dim, 
-	                length, 
-	                )
-	            for i in range(depth)]
-	            )
-			
+			self.encoder = nn.ModuleList(
+			    [HyenaModule(
+			        dim, 
+			        length,
+			        )
+			    for i in range(depth)]
+			)
+		self.decoderblocks = nn.ModuleList([HyenaModule(dim, length) for i in range(depth)])	
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
 		self.cel = nn.CrossEntropyLoss()
 		self.tokenized_length = length
@@ -135,11 +135,15 @@ if __name__ == "__main__":
 	dim = 512
 	depth = 16
 	length = 512
-	compression=1     
-	model = AutoencodingMixer(vocab_size, dim, depth, length, compression=compression, frozen_toeplitz=False)
+	compression=1
+	
+	encoder_model = HyenaModel(vocab_size, dim, depth, length)
+	model_path = f"{data_root}/fineweb_hyena_512_n16_b64x2/checkpoint-200000/pytorch_model.bin"
+	encoder_model.load_state_dict(torch.load(model_path))
+	model = AutoencodingMixer(vocab_size, dim, depth, length, compression=compression, frozen_encoder=encoder_model)
 
-	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+	test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 	datasets.config.IN_MEMORY_MAX_SIZE = 50e9
 	train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -147,11 +151,11 @@ if __name__ == "__main__":
 	print(len(train_dataset), len(test_dataset))
 	mlflow.end_run()
 
-	batch_size = 32
+	total_batch_size = 128
 	n_devices = torch.cuda.device_count()
-
+	batch_size = total_batch_size // n_devices
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_autoencoding_hyena\
+	output_dir = f'{checkpoint_root}/fineweb_hyena_information\
 _{dim}\
 _n{depth}\
 _c{length}_b{batch_size}x{n_devices}'
