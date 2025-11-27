@@ -164,6 +164,7 @@ _c{length}_b{batch_size}x{n_devices}'
 		num_train_epochs=2,
 		per_device_train_batch_size=batch_size,
 		per_device_eval_batch_size=batch_size,
+		gradient_accumulation_steps=2,
 		warmup_steps=500,
 		eval_steps=4000,
 		save_steps=8000,

@@ -145,10 +145,10 @@ class ToeplitzHeads(nn.Module):
             self.mixer_heads = nn.ModuleList(
                 [
                     nn.Sequential(
-                        ToeplitzCausalLinear(seq_len),
+                        RepeatCausalLinear(seq_len),
                         nn.SiLU(),
                         nn.Dropout(dropout),
-                        ToeplitzCausalLinear(seq_len),
+                        RepeatCausalLinear(seq_len),
                     )
                     for i in range(n_heads)
                 ]
@@ -225,8 +225,8 @@ class MixerBlock(nn.Module):
         )
 
         self.token_norm = nn.LayerNorm(hidden_dim)
-        if heads and heads > 0:
-            self.token_mixing_layer = ParallelToeplitzHeads(
+        if heads is not None and heads > 0:
+            self.token_mixing_layer = RepeatHeads(
                 hidden_dim,
                 seq_len,
                 heads
@@ -234,6 +234,18 @@ class MixerBlock(nn.Module):
 
         else:
             self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+            if expanded_convs:
+                # token-mixing layer
+                self.token_mixing_layer = nn.Sequential(
+                    RepeatCausalLinear(seq_len),
+                    nn.SiLU(),
+                    nn.Dropout(dropout),
+                    RepeatCausalLinear(seq_len),
+                )  # type: ignore[assignment]
+
+            else:
+                # flat mixer layer
+                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -340,17 +352,20 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 512
-    dim = 256
+    dim = 512
     layers = 16
     n_heads = 4
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, copy=False
+       n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
     ).float()
 
+    n_gpus = torch.cuda.device_count()
+    total_batch_size = 128
+    batch_size = total_batch_size // n_gpus
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
-    output_dir = f"{checkpoint_root}/fineweb_parallel_h4_toep_256_n16_c512_b64x2"
+    output_dir = f"{checkpoint_root}/fineweb_h{n_heads}_repeat_{dim}_n{layers}_c512_b{batch_size}x{n_gpus}"
     
     datasets.config.IN_MEMORY_MAX_SIZE = 5e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
@@ -374,7 +389,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=200000,
-        torch_compile=True
+        torch_compile=False
     )
 
     trainer = transformers.Trainer(
