@@ -79,36 +79,64 @@ class HeadedToeplitzCausalLinear(nn.Module):
         output += repeated_bias
         return output
 
-
-def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
+class ToeplitzCausalLinear(nn.Module):
     """
-    Given a vector v of shape (m,), returns an (m x m) matrix M
-    where M[i, j] = v[j - i] if j >= i, and 0 otherwise.
-
-    For example, if v = [a, b, c, d] then M will be:
-
-    [ a  b  c  d ]
-    [ 0  a  b  c ]
-    [ 0  0  a  b ]
-    [ 0  0  0  a ]
+    A linear layer with a triangular (causal) mask applied to the weight matrix.
+    This ensures each position i cannot use info from positions > i.
     """
-    # Expects v is a preformed tensor with shape [k, D]
-    m = v.shape[-1] # vector shape
 
-    # Create index grids for rows and columns
-    i, j = torch.meshgrid(
-        torch.arange(m, device=v.device),
-        torch.arange(m, device=v.device),
-        indexing="ij",
-    )
-    # j - i gives the offset into v. When j < i, we want a 0.
-    M = torch.where(
-        j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
-    )
-    return M
+    def __init__(self, dim: int, weight, bias):
+
+        super().__init__()
+
+        # Standard weight + bias
+        self.weight = weight
+        self.bias = bias
+
+    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
+        """
+        Given a vector v of shape (m,), returns an (m x m) matrix M
+        where M[i, j] = v[j - i] if j >= i, and 0 otherwise.
+
+        For example, if v = [a, b, c, d] then M will be:
+
+        [ a  b  c  d ]
+        [ 0  a  b  c ]
+        [ 0  0  a  b ]
+        [ 0  0  0  a ]
+        """
+        v = v.reshape(-1)  # Ensure v is a 1D tensor
+        m = v.shape[0]
+        # Create index grids for rows and columns
+        i, j = torch.meshgrid(
+            torch.arange(m, device=v.device),
+            torch.arange(m, device=v.device),
+            indexing="ij",
+        )
+        # j - i gives the offset into v. When j < i, we want a 0.
+        M = torch.where(
+            j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
+        )
+        return M
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x shape: (batch, embed_dim, seq_len)
+        """
+        B, E, S = x.shape
+        W = self.vector_to_matrix(self.weight)
+        x_reshaped = x.reshape(B * E, S)  # (B*E, S)
+        out = x_reshaped @ W  # (B*E, S)
+        out = out + self.bias  # broadcast bias
+        out = out.view(B, E, S)  # reshape back
+        return out
 
 
 def forward(x: torch.Tensor,) -> torch.Tensor:
+    mixer_heads = nn.ModuleList(
+                [ToeplitzCausalLinear(6, WEIGHT[i], BIAS[i]) for i in range(HEADS)]
+            )
+
     activations = []
     x = rearrange(x, "b e t -> b t e")
     size = 3
@@ -117,7 +145,7 @@ def forward(x: torch.Tensor,) -> torch.Tensor:
         start, end = head*size, head*size + size
         projection = x[:, :, start:end] # identity projection
         projection = rearrange(projection, "b t e -> b e t")
-        conv_projection = projection @ vector_to_matrix(WEIGHT[head])
+        conv_projection = mixer_heads[head](projection)
         rearranged_conv = rearrange(conv_projection, "b e t -> b t e")
         activations.append(rearranged_conv)
 
