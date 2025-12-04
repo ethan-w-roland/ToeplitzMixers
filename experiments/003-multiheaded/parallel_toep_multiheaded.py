@@ -115,8 +115,11 @@ class HeadedToeplitzCausalLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.to(device)
-        W = self.vector_to_matrix(self.weight)
-        output = torch.bmm(x, W) + self.bias
+        W = self.vector_to_matrix(self.weight).repeat_interleave(x.shape[0]//self.heads, dim=0)
+        output = torch.bmm(x, W)
+        repeated_bias = self.bias.repeat_interleave(x.shape[0]//self.heads, dim=0)
+        repeated_bias = repeated_bias.unsqueeze(1).repeat(1, x.shape[1], 1)
+        output += repeated_bias
         return output
 
 class ToeplitzHeads(nn.Module):
@@ -180,6 +183,7 @@ class ParallelToeplitzHeads(nn.Module):
         seq_len: int,
         n_heads: int,
     ):
+        # note that the hidden dim is by definition dim // n_heads
         super().__init__()
         self.n_heads = n_heads
         self.in_proj = nn.Linear(dim, dim)
@@ -191,8 +195,9 @@ class ParallelToeplitzHeads(nn.Module):
         headed_projection = self.in_proj(x) 
         projections = rearrange(headed_projection, "b t (h e) -> (b h) e t", h=self.n_heads)
         conv_projection = self.mixer_heads(projections)
-        rearranged_conv = rearrange(conv_projection, "(b h) e t -> b (h e) t", h=self.n_heads)
+        rearranged_conv = rearrange(conv_projection, "(b h) e t -> b t (h e)", h=self.n_heads)
         output = self.out_proj(rearranged_conv)
+        output = rearrange(output, "b t e -> b e t")
         return output
 
 class MixerBlock(nn.Module):
@@ -224,7 +229,6 @@ class MixerBlock(nn.Module):
             self.token_mixing_layer = ParallelToeplitzHeads(
                 hidden_dim,
                 seq_len,
-                hidden_dim // heads,
                 heads
             ) 
 
@@ -255,7 +259,6 @@ class MLPMixer(nn.Module):
         seq_len: int,
         num_blocks: int,
         heads=None,
-        expanded_convs=False,
         copy=False
     ):
         super(MLPMixer, self).__init__()
@@ -268,7 +271,7 @@ class MLPMixer(nn.Module):
         self.mixer_blocks = nn.ModuleList(
             [
                 MixerBlock(
-                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs
+                    hidden_dim, seq_len, heads=heads
                 )
                 for _ in range(num_blocks)
             ]
@@ -336,8 +339,8 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 1024
-    dim = 512
+    tokenized_length = 512
+    dim = 256
     layers = 16
     n_heads = 4
 
@@ -345,11 +348,11 @@ if __name__ == "__main__":
         n_vocab, dim, tokenized_length, layers, heads=n_heads, copy=False
     ).float()
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
-    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
+    output_dir = f"{checkpoint_root}/fineweb_parallel_h4_toep_256_n16_c512_b64x2"
     
-    datasets.config.IN_MEMORY_MAX_SIZE = 50e9
+    datasets.config.IN_MEMORY_MAX_SIZE = 5e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None)
     print(len(train_dataset), len(test_dataset))
@@ -358,8 +361,8 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
@@ -371,6 +374,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=200000,
+        torch_compile=True
     )
 
     trainer = transformers.Trainer(
@@ -382,10 +386,10 @@ if __name__ == "__main__":
     )
 
     # save driver code snapshot in checkpoint dir 
-    #code_path = os.path.abspath(__file__) 
-    #if not os.path.isdir(output_dir): 
-    #    os.mkdir(output_dir) 
-    #shutil.copy(code_path, output_dir) 
+    code_path = os.path.abspath(__file__) 
+    if not os.path.isdir(output_dir): 
+        os.mkdir(output_dir) 
+    shutil.copy(code_path, output_dir) 
 
     model.train()
     trainer.train()
