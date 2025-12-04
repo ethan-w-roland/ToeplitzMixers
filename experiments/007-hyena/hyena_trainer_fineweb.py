@@ -346,7 +346,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 512
-    dim = 256
+    dim = 512
     layers = 16
     model = HyenaModel(n_vocab, dim, layers, tokenized_length)
 
@@ -375,11 +375,12 @@ if __name__ == "__main__":
         learning_rate=5e-4,
         bf16=True,
         eval_strategy="steps",
-        output_dir=f"{checkpoint_root}/fineweb_hyena_256_n16_b64x2",
+        output_dir=f"{checkpoint_root}/fineweb_hyena_512_n16_c1024_b32x2",
         optim="adamw_torch",
         overwrite_output_dir=True,
         save_safetensors=False,
         max_steps=200000,
+        torch_compile=True
     )
 
     trainer = transformers.Trainer(
@@ -392,3 +393,4 @@ if __name__ == "__main__":
 
     model.train()
     trainer.train()
+    #trainer.train(f'{checkpoint_root}/fineweb_hyena_1024_n16_b32x2' + '/checkpoint-80000')

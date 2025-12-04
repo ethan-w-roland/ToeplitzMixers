@@ -87,7 +87,7 @@ class RepeatHeads(nn.Module):
             )
         else:
             self.mixer_heads = nn.ModuleList(
-                [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                [RepeatCausalLinear(seq_len) for i in range(n_heads)]
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -140,7 +140,7 @@ class MixerBlock(nn.Module):
         # token-norm
         self.token_norm = nn.LayerNorm(hidden_dim)
         if heads and heads > 0:
-            self.token_mixing_layer = ToeplitzHeads(
+            self.token_mixing_layer = RepeatHeads(
                 hidden_dim,
                 seq_len,
                 hidden_dim // heads,
@@ -279,13 +279,13 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 1024
+    tokenized_length = 512
     dim = 128
     layers = 16
     n_heads = None
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
     ).float()
     n_gpus = torch.cuda.device_count()
     total_batch_size = 128
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
-    test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
+    test_dataset = load_from_disk(test_path, keep_in_memory=None)#.filter(lambda x: x['input_ids'][-1] != 1).take(5000)
     print(len(train_dataset), len(test_dataset))
     mlflow.end_run()
     print("training begun")
@@ -317,6 +317,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=10000,
+        torch_compile=True
     )
 
     trainer = transformers.Trainer(
@@ -328,10 +329,10 @@ if __name__ == "__main__":
     )
 
     # save driver code snapshot in checkpoint dir 
-    code_path = os.path.abspath(__file__) 
-    if not os.path.isdir(output_dir): 
-        os.mkdir(output_dir) 
-    shutil.copy(code_path, output_dir) 
+    #code_path = os.path.abspath(__file__) 
+    #if not os.path.isdir(output_dir): 
+    #    os.mkdir(output_dir) 
+    #shutil.copy(code_path, output_dir) 
 
     model.train()
     trainer.train()
