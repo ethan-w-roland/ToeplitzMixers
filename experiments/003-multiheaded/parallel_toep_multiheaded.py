@@ -115,9 +115,9 @@ class HeadedToeplitzCausalLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.to(device)
-        W = self.vector_to_matrix(self.weight).repeat_interleave(x.shape[0]//self.heads, dim=0)
+        W = self.vector_to_matrix(self.weight).repeat(x.shape[0]//self.heads, 1, 1) 
         output = torch.bmm(x, W)
-        repeated_bias = self.bias.repeat_interleave(x.shape[0]//self.heads, dim=0)
+        repeated_bias = self.bias.repeat(x.shape[0]//self.heads, 1)
         repeated_bias = repeated_bias.unsqueeze(1).repeat(1, x.shape[1], 1)
         output += repeated_bias
         return output
