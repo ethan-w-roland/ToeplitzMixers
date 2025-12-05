@@ -12,10 +12,9 @@ from dotenv import load_dotenv
 import shutil
 import numpy as np
 import matplotlib.pyplot as plt 
-from toep_mixer_multiheaded import MLPMixer
-from toep_copy import MLPMixer as CopyMixer
-plt.style.use('dark_background')
+from toep_autoencoder import AutoencodingMixer
 
+plt.style.use('dark_background')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 @torch.no_grad()
@@ -64,7 +63,7 @@ def plot_initial(n_initials=50000):
 	initial_values = torch.tensor([np.exp(3.141592653589793j * (2*t/n_initials)) for t in range(n_initials)])
 	real_output = initial_values.real
 	imag_output = initial_values.imag
-	plt.scatter(real_output, imag_output, alpha=1, color='white', linewidth=0.25)
+	plt.plot(real_output, imag_output, alpha=1, color='white', linewidth=0.15)
 	plt.axis('on')
 	plt.tight_layout()
 	plt.show()
@@ -121,7 +120,7 @@ def plot_weights(weight_vectors):
 	axes = axes.flatten()
 
 	for i, ax in enumerate(axes):
-		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='plasma', interpolation='nearest', vmin=-0.015, vmax=0.015)
+		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='plasma', interpolation='nearest')
 		# ax.set_title(f'Layer {i}', fontsize='small')
 		ax.axis('off')
 
@@ -143,34 +142,18 @@ if __name__ == "__main__":
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
 
-	# tokenized_length = 512
-	# dim = 256
-	# layers = 16
-	# n_heads = None
-
-	# # model = MLPMixer(
-	# # 	n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
-	# # )
-
-	# # checkpoint_path = checkpoint_root + '/fineweb_flat_toep_256_c512.safetensors'
-	# # load_model(model, checkpoint_path)
-
-
-	tokenized_length = 1024
+	vocab_size = 8000
 	dim = 512
-	layers = 16
-	n_heads = None
-
-	model = CopyMixer(
-		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
-	).float()
-
-	checkpoint_path = checkpoint_root + '/fineweb_copy_flat_toep_512_c1024.json'
-	load_model(model, checkpoint_path)
-
-
-	toeplitz_layers = [model.mixer_blocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.mixer_blocks))]
-	weight_vector = toeplitz_layers[8] # 8 has high char
+	depth = 16
+	length = 512
+	compression=1     
+	kernel=1
+	heads=None
+	model = AutoencodingMixer(vocab_size, dim, depth, length, n_heads=heads, kernel=kernel, compression=compression, frozen_toeplitz=False)
+	checkpoint_path = checkpoint_root + '/fineweb_autoencoding_toep_512_c512.bin'
+	model.load_state_dict(torch.load(checkpoint_path))
+	toeplitz_layers = [model.decoderblocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.decoderblocks))]
+	weight_vector = toeplitz_layers[15] # 8 has high char
 
 	# weight_vector = nn.Parameter(torch.randn(1, 512))
 	# nn.init.kaiming_normal_(weight_vector)
@@ -179,7 +162,7 @@ if __name__ == "__main__":
 	plot_weights(toeplitz_layers)
 	# plot_all_windings(toeplitz_layers)
 
-	plot_initial()
+	# plot_initial()
 	# print (weight_vector)
 	plot_winding(weight_vector)
 

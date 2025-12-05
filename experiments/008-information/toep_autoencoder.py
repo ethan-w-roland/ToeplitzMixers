@@ -13,6 +13,9 @@ from toep_mixer_multiheaded import MixerBlock as MixerBlock
 from frozen_toep_mixer_multiheaded import MixerBlock as FrozenMixerBlock
 from toep_mixer_multiconv import MixerBlock as MultiBLock
 
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+device = 'cpu'
+
 class AutoencodingMixer(nn.Module):
 
 	def __init__(self, n_vocab, 
@@ -92,7 +95,6 @@ class AutoencodingMixer(nn.Module):
 		self.unroll = unroll
 		self.dim = dim
 		self.clm_encoder = clm_encoder
-		#if unroll == True:
 		self.projection = nn.Linear(dim//2, dim)
 		self.random_input = random
 
@@ -161,7 +163,6 @@ if __name__ == "__main__":
 	load_dotenv()
 	checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 	data_root = os.getenv('DATA_ROOT')
-	device = "cuda" if torch.cuda.is_available() else "cpu"
 
 	tokenizer = AutoTokenizer.from_pretrained(f"{data_root}/tokenizer_fineweb_8k")
 	tokenizer.pad_token = tokenizer.eos_token
