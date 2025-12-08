@@ -66,7 +66,6 @@ def calculate_winding_numbers(weight_vectors, n_initials=50000):
 		output = toeplitz_symbol(initial_values, weight_vector).numpy()
 		total_arg = 0
 		prev_arg = np.angle(output[0], deg=False)
-		print (prev_arg)
 		for point in output[1:]:
 			arg = np.angle(point, deg=False)
 
@@ -81,20 +80,13 @@ def calculate_winding_numbers(weight_vectors, n_initials=50000):
 			else:
 				rotation = arg - prev_arg
 
-			print (f'Prev Arg: {prev_arg}, Arg: {arg}, Rotation: {rotation}')
+			# print (f'Prev Arg: {prev_arg}, Arg: {arg}, Rotation: {rotation}')
 			total_arg += rotation
 			prev_arg = arg
-			print (f'Total arg: {total_arg}')
+			# print (f'Total arg: {total_arg}')
 
-		print (total_arg)
-		winding_number = int(total_arg // (2 * np.pi))
-
-		# # correct for finite difference
-		# remainder = total_arg % (2*np.pi)
-		# if remainder > (0.95 * 2 * np.pi):
-		# 	winding_number += 1
-		# if total_arg < - (0.95 * 2 * np.pi):
-		# 	winding_number -= 1
+		# the following seems to round decently to account for finite differences
+		winding_number = int(np.round(total_arg / (2 * np.pi), decimals=0))
 
 		all_windings.append(winding_number)
 		print (f"Layer {i} Fredholm Index: {winding_number}")
@@ -214,20 +206,20 @@ if __name__ == "__main__":
 	model = load_clm()
 
 	toeplitz_layers = [model.mixer_blocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.mixer_blocks))]
-	weight_vector = toeplitz_layers[3] # 8 has high char
+	weight_vector = toeplitz_layers[5] # 8 has high char
 	# weight_vector = torch.zeros(512)
 	# weight_vector[1] = 1
 	# print (weight_vector)
 	plot_winding(weight_vector)
 	# plot_all_windings(toeplitz_layers)
-	calculate_winding_numbers(toeplitz_layers)
+	print (calculate_winding_numbers(toeplitz_layers))
 
 	# weight_vector = nn.Parameter(torch.randn(1, 512))
 	# nn.init.kaiming_normal_(weight_vector)
 	# weight_vector = weight_vector.squeeze(0)
 
 	# plot_weights(toeplitz_layers)
-	# plot_windings_grid(toeplitz_layers)
+	plot_windings_grid(toeplitz_layers)
 
 
 	# plot_initial()
