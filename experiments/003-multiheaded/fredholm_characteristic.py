@@ -14,8 +14,8 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from toep_mixer_multiheaded import MLPMixer
 from toep_copy import MLPMixer as CopyMixer
-plt.style.use('dark_background')
 
+# plt.style.use('dark_background')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 @torch.no_grad()
@@ -89,6 +89,8 @@ def calculate_winding_numbers(weight_vectors, n_initials=50000):
 		winding_number = int(np.round(total_arg / (2 * np.pi), decimals=0))
 
 		all_windings.append(winding_number)
+		# fredholm index = -(winding number) for left multiplication, we use right multiplicatio so F = winding number
+		# as kernel and cokernel are swapped
 		print (f"Layer {i} Fredholm Index: {winding_number}")
 	return all_windings
 
@@ -131,7 +133,7 @@ def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
 	return M
 
 @torch.no_grad()
-def plot_windings_grid(weight_vectors, n_initials=50000):
+def plot_windings_grid(weight_vectors, windings=None, n_initials=50000):
 	fig, axes = plt.subplots(4, 4, figsize=(8, 8)) # Create a 4x4 grid of subplots
 	axes = axes.flatten()
 
@@ -141,7 +143,9 @@ def plot_windings_grid(weight_vectors, n_initials=50000):
 		output = toeplitz_symbol(initial_values, weight_vectors[i]).numpy()
 		real_output = output.real
 		imag_output = output.imag
-		ax.plot(real_output, imag_output, color='white', alpha=1, linewidth=0.1)
+		ax.scatter(0, 0, color='red', s=2)
+		ax.plot(real_output, imag_output, color='black', alpha=1, linewidth=0.05, label=windings[i])
+		# ax.legend()
 		ax.axis('off')
 
 	plt.tight_layout()
@@ -163,9 +167,9 @@ def plot_weights(weight_vectors):
 	plt.close()
 	return
 
-def load_clm():
+def load_clm(d=1024):
 	tokenized_length = 512
-	dim = 1024
+	dim = d
 	layers = 16
 	n_heads = None
 
@@ -173,7 +177,7 @@ def load_clm():
 		n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
 	)
 
-	checkpoint_path = checkpoint_root + '/fineweb_flat_toep_1024_c512.safetensors'
+	checkpoint_path = checkpoint_root + f'/fineweb_flat_toep_{d}_c512.safetensors'
 	load_model(model, checkpoint_path)
 	return model
 
@@ -210,16 +214,17 @@ if __name__ == "__main__":
 	# weight_vector = torch.zeros(512)
 	# weight_vector[1] = 1
 	# print (weight_vector)
-	plot_winding(weight_vector)
-	# plot_all_windings(toeplitz_layers)
-	print (calculate_winding_numbers(toeplitz_layers))
+	# plot_winding(weight_vector)
+	plot_all_windings(toeplitz_layers)
+	# winding_numbers = calculate_winding_numbers(toeplitz_layers)
+	# print (winding_numbers)
 
 	# weight_vector = nn.Parameter(torch.randn(1, 512))
 	# nn.init.kaiming_normal_(weight_vector)
 	# weight_vector = weight_vector.squeeze(0)
 
 	# plot_weights(toeplitz_layers)
-	plot_windings_grid(toeplitz_layers)
+	# plot_windings_grid(toeplitz_layers, windings = winding_numbers)
 
 
 	# plot_initial()
