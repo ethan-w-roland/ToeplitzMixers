@@ -51,7 +51,7 @@ def plot_all_windings(weight_vectors, n_initials=50000):
 		real_output = output.real
 		imag_output = output.imag
 		plt.plot(real_output, imag_output, alpha=1, linewidth=0.15)
-	plt.axis('on')
+	plt.axis('off')
 	plt.tight_layout()
 	plt.show()
 	plt.close()
@@ -156,7 +156,7 @@ def plot_weights(weight_vectors):
 	axes = axes.flatten()
 
 	for i, ax in enumerate(axes):
-		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='plasma', interpolation='nearest')
+		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='berlin', interpolation='nearest')
 		# ax.set_title(f'Layer {i}', fontsize='small')
 		ax.axis('off')
 
@@ -165,7 +165,7 @@ def plot_weights(weight_vectors):
 	plt.close()
 	return
 
-colormap = plt.cm.viridis
+colormap = plt.cm.plasma
 cycler = plt.cycler('color', colormap(np.linspace(0., 1, 16)))
 plt.gca().set_prop_cycle(cycler)
 
@@ -195,11 +195,12 @@ if __name__ == "__main__":
 	nn.init.kaiming_normal_(weight_vector)
 	weight_vector = weight_vector.squeeze(0)
 
-	# plot_weights(toeplitz_layers)
+	plot_weights(toeplitz_layers)
 	# plot_winding(weight_vector)
 	# plot_all_windings(toeplitz_layers)
-	print (calculate_winding_numbers(toeplitz_layers))
-	plot_windings_grid(toeplitz_layers)
+	# print (calculate_winding_numbers(toeplitz_layers))
+	# plot_windings_grid(toeplitz_layers)
+	# plot_all_windings(toeplitz_layers)
 
 	# plot_initial()
 	# print (weight_vector)

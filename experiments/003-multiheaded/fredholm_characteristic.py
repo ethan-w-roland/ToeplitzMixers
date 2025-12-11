@@ -52,7 +52,7 @@ def plot_all_windings(weight_vectors, n_initials=50000):
 		real_output = output.real
 		imag_output = output.imag
 		plt.plot(real_output, imag_output, alpha=1, linewidth=0.15)
-	plt.axis('on')
+	plt.axis('off')
 	plt.tight_layout()
 	plt.show()
 	plt.close()
@@ -158,7 +158,7 @@ def plot_weights(weight_vectors):
 	axes = axes.flatten()
 
 	for i, ax in enumerate(axes):
-		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='plasma', interpolation='nearest', vmin=-0.015, vmax=0.015)
+		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='berlin', interpolation='nearest', vmin=-0.015, vmax=0.015)
 		# ax.set_title(f'Layer {i}', fontsize='small')
 		ax.axis('off')
 
@@ -195,7 +195,7 @@ def load_copy_model():
 	load_model(model, checkpoint_path)
 	return model
 
-colormap = plt.cm.viridis
+colormap = plt.cm.plasma
 cycler = plt.cycler('color', colormap(np.linspace(0., 1, 16)))
 plt.gca().set_prop_cycle(cycler)
 
@@ -207,7 +207,7 @@ if __name__ == "__main__":
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
-	model = load_clm()
+	model = load_copy_model()
 
 	toeplitz_layers = [model.mixer_blocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.mixer_blocks))]
 	weight_vector = toeplitz_layers[5] # 8 has high char
@@ -215,7 +215,7 @@ if __name__ == "__main__":
 	# weight_vector[1] = 1
 	# print (weight_vector)
 	# plot_winding(weight_vector)
-	plot_all_windings(toeplitz_layers)
+	# plot_all_windings(toeplitz_layers)
 	# winding_numbers = calculate_winding_numbers(toeplitz_layers)
 	# print (winding_numbers)
 
@@ -223,7 +223,7 @@ if __name__ == "__main__":
 	# nn.init.kaiming_normal_(weight_vector)
 	# weight_vector = weight_vector.squeeze(0)
 
-	# plot_weights(toeplitz_layers)
+	plot_weights(toeplitz_layers)
 	# plot_windings_grid(toeplitz_layers, windings = winding_numbers)
 
 
