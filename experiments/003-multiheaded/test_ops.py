@@ -1,6 +1,7 @@
 import torch
 from einops import rearrange
 import torch.nn as nn
+import numpy as np
 
 """
 Tests equivalence of parallelized multi-headed mixer operation (via fully materialized weight matmult and bias add) with sequential mat mult, ignoring
@@ -164,12 +165,98 @@ def parallel_forward(x) -> torch.Tensor:
     output = rearrange(rearranged_conv, "b t e -> b e t")
     return output
 
-HEADS = 3
-WEIGHT = nn.Parameter(torch.randn(HEADS, 6))
-BIAS = nn.Parameter(torch.zeros(HEADS, 6))
-x = torch.randn((32, 9, 6)).to(torch.float) # [b e t] shape
-pout = parallel_forward(x)
-out = forward(x)
+def fftconv(u, k):
+    seqlen = u.shape[-1]
+    fft_size = 2 * seqlen
+    
+    k_f = torch.fft.rfft(k, n=fft_size) 
+    u_f = torch.fft.rfft(u.to(dtype=k.dtype), n=fft_size)
+    
+    if len(u.shape) > 3: 
+        k_f = k_f.unsqueeze(1)
+    y = torch.fft.irfft(u_f * k_f, n=fft_size, norm='forward')[..., :seqlen]
+    return y.to(dtype=u.dtype)
 
-# Test that parallelized head op is identical to sequential head op
-assert torch.allclose(pout, out, rtol=1e-3)
+# def matmul_toeplitz(c, r, x):
+#     n, m = x.shape
+
+#     T_nrows = r.shape[0]
+#     T_ncols = c.shape[0]
+#     p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
+#     return_shape = (T_nrows,) if len(x.shape) == 1 else (T_nrows, m)
+
+#     embedded_col = torch.cat((c, r[-1:0:-1]))
+
+#     # Real inputs; using rfft is faster
+#     fft_mat = torch.fft.rfft(embedded_col, axis=0, workers=workers).reshape(-1, 1)
+#     fft_x = torch.fft.rfft(x, n=p, axis=0, workers=workers)
+
+#     mat_times_x = torch.fft.irfft(fft_mat*fft_x, axis=0,
+#                         workers=workers, n=p)[:T_nrows, :]
+
+#     return mat_times_x.reshape(*return_shape)
+
+def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
+
+    from numpy.fft import fft, ifft, rfft, irfft
+
+    n, m = x.shape
+
+    T_nrows = len(c)
+    T_ncols = len(r)
+    p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
+    return_shape = (T_nrows, m)
+
+    # accommodate empty arrays
+    if x.size == 0:
+        return np.empty_like(x, shape=return_shape)
+
+    embedded_col = np.concatenate((c, r[-1:0:-1]))
+
+    if np.iscomplexobj(embedded_col) or np.iscomplexobj(x):
+        fft_mat = fft(embedded_col, axis=0, workers=workers).reshape(-1, 1)
+        fft_x = fft(x, n=p, axis=0, workers=workers)
+
+        mat_times_x = ifft(fft_mat*fft_x, axis=0,
+                           workers=workers)[:T_nrows, :]
+    else:
+        # Real inputs; using rfft is faster
+        fft_mat = rfft(embedded_col, axis=0).reshape(-1, 1)
+        fft_x = rfft(x, n=p, axis=0)
+
+        mat_times_x = irfft(fft_mat*fft_x, axis=0, n=p)[:T_nrows, :]
+
+    return mat_times_x.reshape(*return_shape)
+
+T = torch.tensor([
+    [1,3,4],
+    [0,1,3],
+    [0,0,1]]
+    )
+t_r = T[0, :]
+t_c = T[:, 0]
+
+t_r = np.array([1,3,4])
+t_c = np.array([1,0,0])
+X = np.array([[3,2,1], [3,2,5]])
+# X = torch.tensor([[3,2,1], [3,2,5]])
+print (X.shape, T.shape)
+
+
+# To convert (X @ T converts to T.T @ X.T).T
+ref_fft_matmult = matmul_toeplitz(t_r, t_c, X.T)
+print (ref_fft_matmult.T)
+X = torch.tensor(X)
+print (X @ T)
+
+
+
+# HEADS = 3
+# WEIGHT = nn.Parameter(torch.randn(HEADS, 6))
+# BIAS = nn.Parameter(torch.zeros(HEADS, 6))
+# x = torch.randn((32, 9, 6)).to(torch.float) # [b e t] shape
+# pout = parallel_forward(x)
+# out = forward(x)
+
+# # Test that parallelized head op is identical to sequential head op
+# assert torch.allclose(pout, out, rtol=1e-3)

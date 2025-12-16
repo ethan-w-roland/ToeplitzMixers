@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from toep_mixer_multiheaded import MLPMixer
 from toep_copy import MLPMixer as CopyMixer
 
-# plt.style.use('dark_background')
+plt.style.use('dark_background')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 @torch.no_grad()
@@ -130,7 +130,7 @@ def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
 	M = torch.where(
 		j >= i, v[j - i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
 	)
-	return M
+	return M.T
 
 @torch.no_grad()
 def plot_windings_grid(weight_vectors, windings=None, n_initials=50000):
@@ -158,7 +158,7 @@ def plot_weights(weight_vectors):
 	axes = axes.flatten()
 
 	for i, ax in enumerate(axes):
-		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='berlin', interpolation='nearest', vmin=-0.015, vmax=0.015)
+		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='berlin', interpolation='nearest')
 		# ax.set_title(f'Layer {i}', fontsize='small')
 		ax.axis('off')
 
@@ -166,6 +166,17 @@ def plot_weights(weight_vectors):
 	plt.show()
 	plt.close()
 	return
+
+@torch.no_grad()
+def kernel_dims(weight_vectors):
+	all_kernels = []
+	for i, weight_vector in enumerate(weight_vectors):
+		m = vector_to_matrix(weight_vector.detach())
+		print (m)
+		U, S, Vh = np.linalg.svd(m)
+		all_kernels.append(np.sum(np.where(np.abs(S)>1e-6, 1, 0)))
+	return all_kernels
+
 
 def load_clm(d=1024):
 	tokenized_length = 512
@@ -207,15 +218,22 @@ if __name__ == "__main__":
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
 	print("Vocab size: ", n_vocab)
-	model = load_copy_model()
+	model = load_clm()
 
 	toeplitz_layers = [model.mixer_blocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.mixer_blocks))]
 	weight_vector = toeplitz_layers[5] # 8 has high char
-	# weight_vector = torch.zeros(512)
-	# weight_vector[1] = 1
-	# print (weight_vector)
-	# plot_winding(weight_vector)
+	# print (kernel_dims(toeplitz_layers))
+	weight_vector = torch.zeros(20)
+	weight_vector[1] = 1
+	weight_matrix = vector_to_matrix(weight_vector).T
+	print (calculate_winding_numbers([weight_vector]))
+	input_vector = torch.arange(20, dtype=torch.float) + 1
+	# print (input_vector)
+	# print (weight_matrix @ input_vector)
+	# print (kernel_dims([weight_vector]))
+
 	# plot_all_windings(toeplitz_layers)
+	# plot_initial()
 	# winding_numbers = calculate_winding_numbers(toeplitz_layers)
 	# print (winding_numbers)
 
