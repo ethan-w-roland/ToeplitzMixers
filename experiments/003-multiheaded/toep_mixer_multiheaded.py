@@ -76,10 +76,8 @@ class FFTToeplitzCausalLinear(nn.Module):
         self.toep_weight = nn.Parameter(torch.randn(dim))
         # upper triangular Toeplitz matrix first column zero pad
         self.toep_col = torch.cat((torch.tensor([self.toep_weight[0]]), torch.zeros(dim-1).to(self.toep_weight.device)))
-
         # transpose toep matrix
         self.c, self.r = self.toep_weight, self.toep_col # transpose Toeplitz matrix
-        self.embedded_column = torch.cat((c, torch.flip(r[1:], dims=[0]))) # embedding for circulant
         self.bias = nn.Parameter(torch.zeros(dim))
 
     def torch_matmul_toeplitz(self, x):
@@ -100,11 +98,12 @@ class FFTToeplitzCausalLinear(nn.Module):
         T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
         p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
         return_shape = (T_nrows, n)
-        fft_mat = torch.fft.rfft(self.embedded_col).reshape(-1, 1)
+        embedded_column = torch.cat((self.c, torch.flip(self.r[1:], dims=[0]))) # embedding for circulant
+        fft_mat = torch.fft.rfft(embedded_column).reshape(-1, 1)
         fft_x = torch.fft.rfft(x, n=p, dim=0)
 
         output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
-        formatted_out = output.to(input_dtype) # transpose output
+        formatted_out = output.to(input_dtype) # output to be transposed later
         return formatted_out
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -114,7 +113,6 @@ class FFTToeplitzCausalLinear(nn.Module):
         out = out + self.bias  # broadcast bias
         out = out.view(B, E, S)  # reshape back
         return out
-
 
 class ToeplitzHeads(nn.Module):
 
