@@ -17,7 +17,6 @@ class ToeplitzCausalLinear(nn.Module):
     A linear layer with a triangular (causal) mask applied to the weight matrix.
     This ensures each position i cannot use info from positions > i.
     """
-
     def __init__(self, dim: int):
 
         super().__init__()
@@ -60,6 +59,58 @@ class ToeplitzCausalLinear(nn.Module):
         W = self.vector_to_matrix(self.weight)
         x_reshaped = x.reshape(B * E, S)  # (B*E, S)
         out = x_reshaped @ W  # (B*E, S)
+        out = out + self.bias  # broadcast bias
+        out = out.view(B, E, S)  # reshape back
+        return out
+
+
+class FFTToeplitzCausalLinear(nn.Module):
+    """
+    A Toeplitz layer (masked) implemented using FFTs for O(dn log n) time and (O(dn)) space
+    complexity.
+    """
+    def __init__(self, dim: int):
+
+        super().__init__()
+        # Standard weight + bias
+        self.toep_weight = nn.Parameter(torch.randn(dim))
+        # upper triangular Toeplitz matrix first column zero pad
+        self.toep_col = torch.cat((torch.tensor([self.toep_weight[0]]), torch.zeros(dim-1).to(self.toep_weight.device)))
+
+        # transpose toep matrix
+        self.c, self.r = self.toep_weight, self.toep_col # transpose Toeplitz matrix
+        self.embedded_column = torch.cat((c, torch.flip(r[1:], dims=[0]))) # embedding for circulant
+        self.bias = nn.Parameter(torch.zeros(dim))
+
+    def torch_matmul_toeplitz(self, x):
+        """
+        FFT-based Toeplitz matmul: computes TX, where c is the first col of T and r the first row of T.
+        Note that this is implmemented for real-valued X and T only.
+        Based on the official Scipy matmul_toeplitz implementation 
+        (https://github.com/scipy/scipy/blob/v1.16.2/scipy/linalg/_basic.py)
+
+        Args:
+            c: torch.tensor, vector of first column of Toeplitz matrix
+            r: torch.tensor, vector of first row of Toeplitz matrix
+            x: torch.tensor, matrix of input values to right multiply
+        """
+        input_dtype = x.dtype
+        c, r = self.c, self.r
+        m, n = x.shape
+        T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
+        p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
+        return_shape = (T_nrows, n)
+        fft_mat = torch.fft.rfft(self.embedded_col).reshape(-1, 1)
+        fft_x = torch.fft.rfft(x, n=p, dim=0)
+
+        output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
+        formatted_out = output.to(input_dtype) # transpose output
+        return formatted_out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, E, S = x.shape
+        x_reshaped = x.reshape(B * E, S)
+        out = self.torch_matmul_toeplitz(x_reshaped.T).T
         out = out + self.bias  # broadcast bias
         out = out.view(B, E, S)  # reshape back
         return out

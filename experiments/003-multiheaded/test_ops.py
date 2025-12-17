@@ -165,43 +165,35 @@ def parallel_forward(x) -> torch.Tensor:
     output = rearrange(rearranged_conv, "b t e -> b e t")
     return output
 
-def fftconv(u, k):
-    seqlen = u.shape[-1]
-    fft_size = 2 * seqlen
-    
-    k_f = torch.fft.rfft(k, n=fft_size) 
-    u_f = torch.fft.rfft(u.to(dtype=k.dtype), n=fft_size)
-    
-    if len(u.shape) > 3: 
-        k_f = k_f.unsqueeze(1)
-    y = torch.fft.irfft(u_f * k_f, n=fft_size, norm='forward')[..., :seqlen]
-    return y.to(dtype=u.dtype)
 
-# def matmul_toeplitz(c, r, x):
-#     n, m = x.shape
+def torch_matmul_toeplitz(c, r, x):
+    """
+    FFT-based Toeplitz matmul: computes TX, where c is the first col of T and r the first row of T.
+    Note that this is implmemented for real-valued X, T only
 
-#     T_nrows = r.shape[0]
-#     T_ncols = c.shape[0]
-#     p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
-#     return_shape = (T_nrows,) if len(x.shape) == 1 else (T_nrows, m)
+    Args:
+        c: torch.tensor, vector of first column of Toeplitz matrix
+        r: torch.tensor, vector of first row of Toeplitz matrix
+        x: torch.tensor, matrix of input values to right multiply
+    """
+    input_dtype = x.dtype
+    m, n = x.shape
+    T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
+    p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
+    return_shape = (T_nrows, n)
 
-#     embedded_col = torch.cat((c, r[-1:0:-1]))
+    embedded_col = torch.cat((c, torch.flip(r[1:], dims=[0]))) # embedding for circulant
+    fft_mat = torch.fft.rfft(embedded_col).reshape(-1, 1)
+    fft_x = torch.fft.rfft(x, n=p, dim=0)
 
-#     # Real inputs; using rfft is faster
-#     fft_mat = torch.fft.rfft(embedded_col, axis=0, workers=workers).reshape(-1, 1)
-#     fft_x = torch.fft.rfft(x, n=p, axis=0, workers=workers)
+    output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
+    return output.to(input_dtype)
 
-#     mat_times_x = torch.fft.irfft(fft_mat*fft_x, axis=0,
-#                         workers=workers, n=p)[:T_nrows, :]
-
-#     return mat_times_x.reshape(*return_shape)
 
 def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
-
     from numpy.fft import fft, ifft, rfft, irfft
 
     n, m = x.shape
-
     T_nrows = len(c)
     T_ncols = len(r)
     p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
@@ -213,42 +205,58 @@ def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
 
     embedded_col = np.concatenate((c, r[-1:0:-1]))
 
-    if np.iscomplexobj(embedded_col) or np.iscomplexobj(x):
-        fft_mat = fft(embedded_col, axis=0, workers=workers).reshape(-1, 1)
-        fft_x = fft(x, n=p, axis=0, workers=workers)
-
-        mat_times_x = ifft(fft_mat*fft_x, axis=0,
-                           workers=workers)[:T_nrows, :]
-    else:
-        # Real inputs; using rfft is faster
-        fft_mat = rfft(embedded_col, axis=0).reshape(-1, 1)
-        fft_x = rfft(x, n=p, axis=0)
-
-        mat_times_x = irfft(fft_mat*fft_x, axis=0, n=p)[:T_nrows, :]
+    # Real inputs; using rfft is faster
+    fft_mat = rfft(embedded_col, axis=0).reshape(-1, 1)
+    fft_x = rfft(x, n=p, axis=0)
+    mat_times_x = irfft(fft_mat*fft_x, axis=0, n=p)[:T_nrows, :]
 
     return mat_times_x.reshape(*return_shape)
 
+weight = torch.tensor([3, 1, 2])
+c = torch.cat((torch.tensor([weight[0]]), torch.zeros(len(weight)-1)))
+print (c)
+
 T = torch.tensor([
-    [1,3,4],
-    [0,1,3],
-    [0,0,1]]
+    [1.,3.,4.],
+    [0.,1.,3.],
+    [0.,0.,1.]]
     )
+
 t_r = T[0, :]
 t_c = T[:, 0]
+X = torch.tensor([[3.,2.,1.], [3.,2.,5.]])
 
-t_r = np.array([1,3,4])
-t_c = np.array([1,0,0])
-X = np.array([[3,2,1], [3,2,5]])
-# X = torch.tensor([[3,2,1], [3,2,5]])
-print (X.shape, T.shape)
+t_r_np = np.array([1.,3.,4.])
+t_c_np = np.array([1.,0.,0.])
+X_np = np.array([[3.,2.,1.], [3.,2.,5.]])
 
 
-# To convert (X @ T converts to T.T @ X.T).T
-ref_fft_matmult = matmul_toeplitz(t_r, t_c, X.T)
-print (ref_fft_matmult.T)
-X = torch.tensor(X)
-print (X @ T)
+T = torch.tensor([
+    [1., 3., 4., 0.1, -.3],
+    [0., 1., 3., 4.,  0.1],
+    [0., 0., 1., 3., 4.],
+    [0., 0., 0., 1., 3.],
+    [0., 0., 0., 0., 1.]]
+    )
 
+t_r = T[0, :]
+t_c = T[:, 0]
+X = torch.tensor([[-0.3,2.,-1.1,-0.2,2.1], [3.1,-2.2,5.,-0.3,0.4]])
+
+t_r_np = np.array(t_r)
+t_c_np = np.array(t_c)
+X_np = np.array(X)
+
+# To convert (X @ T converts to T.T @ X.T).T:  swap t_r and t_c (ie transpose T), transpose X, FFT and rFFT, and transpose the output.
+# ref_fft_matmult = matmul_toeplitz(t_r_np, t_c_np, X_np.T)
+
+ref_fft_output = torch.tensor(matmul_toeplitz(t_r_np, t_c_np, X_np.T), dtype=torch.float).T
+torch_fft_output = torch_matmul_toeplitz(t_r, t_c, X.T).to(torch.float).T
+matmul_output = X @ T
+print (ref_fft_output)
+print (torch_fft_output)
+print (torch.abs(torch.max(ref_fft_output - torch_fft_output)) < 1e-5)
+assert torch.allclose(ref_fft_output, torch_fft_output)
 
 
 # HEADS = 3
