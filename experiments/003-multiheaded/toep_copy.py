@@ -10,51 +10,10 @@ import os
 from dotenv import load_dotenv
 import shutil
 from frozen_toep_mixer_multiheaded import MLPMixer as FrozenMixer
+from repeat_test import RepeatHeads, RepeatCausalLinear, DiagonalCausalLinear, KernelRepeatLinear
 
 all_hammings = []
 hamming_log =[]
-
-class RepeatCausalLinear(nn.Module):
-
-    def __init__(self, dim: int):
-
-        super().__init__()
-
-        # Standard weight + bias
-        self.weight = nn.Parameter(torch.randn(1, dim))
-        self.bias = nn.Parameter(torch.zeros(dim))
-
-    def vector_to_matrix(self, v: torch.Tensor) -> torch.Tensor:
-        """
-        [ a  a  a  a ]
-        [ 0  b  b  b ]
-        [ 0  0  c  c ]
-        [ 0  0  0  d ]
-        """
-        v = v.reshape(-1)  # Ensure v is a 1D tensor
-        m = v.shape[0]
-        # Create index grids for rows and columns
-        i, j = torch.meshgrid(
-            torch.arange(m, device=v.device),
-            torch.arange(m, device=v.device),
-            indexing="ij",
-        )
-        M = torch.where(
-            j >= i, v[i], torch.zeros(m, m, device=v.device, dtype=v.dtype)
-        )
-        return M
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x shape: (batch, embed_dim, seq_len)
-        """
-        B, E, S = x.shape
-        W = self.vector_to_matrix(self.weight)
-        x_reshaped = x.reshape(B * E, S)  # (B*E, S)
-        out = x_reshaped @ W  # (B*E, S)
-        out = out + self.bias  # broadcast bias
-        out = out.view(B, E, S)  # reshape back
-        return out
 
 
 class ToeplitzCausalLinear(nn.Module):
@@ -196,7 +155,7 @@ class MixerBlock(nn.Module):
         # token-norm
         self.token_norm = nn.LayerNorm(hidden_dim)
         if heads and heads > 0:
-            self.token_mixing_layer = ToeplitzHeads(
+            self.token_mixing_layer = RepeatHeads(
                 hidden_dim,
                 seq_len,
                 hidden_dim // heads,
@@ -208,15 +167,15 @@ class MixerBlock(nn.Module):
             if expanded_convs:
                 # token-mixing layer
                 self.token_mixing_layer = nn.Sequential(
-                    ToeplitzCausalLinear(seq_len),
+                    RepeatCausalLinear(seq_len),
                     nn.SiLU(),
                     nn.Dropout(dropout),
-                    ToeplitzCausalLinear(seq_len),
+                    RepeatCausalLinear(seq_len),
                 )  # type: ignore[assignment]
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = RepeatCausalLinear(seq_len)  # type: ignore[assignment]
+                self.token_mixing_layer = KernelRepeatLinear(seq_len, 8)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -284,7 +243,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear) or isinstance(m, RepeatCausalLinear):
+            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear) or isinstance(m, RepeatCausalLinear) or isinstance(m, KernelRepeatLinear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -385,7 +344,7 @@ if __name__ == "__main__":
     print("Vocab size: ", n_vocab)
 
     tokenized_length = 1024
-    dim = 128
+    dim = 1024
     layers = 16
     n_heads = None
 
@@ -400,7 +359,7 @@ if __name__ == "__main__":
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
     
-    output_dir = f"{checkpoint_root}/fineweb_copy_repeat_h0_{dim}_n{layers}_b16x4"
+    output_dir = f"{checkpoint_root}/fineweb_copy_colrepeat_k8_{dim}_n{layers}_b16x4"
     datasets.config.IN_MEMORY_MAX_SIZE = 50e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None).filter(lambda x: x['input_ids'][-1] != 1).take(5000)
@@ -425,6 +384,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=10000,
+        torch_compile=True
     )
 
     trainer = transformers.Trainer(

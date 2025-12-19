@@ -56,10 +56,10 @@ class ToeplitzCausalLinear(nn.Module):
         x shape: (batch, embed_dim, seq_len)
         """
         B, E, S = x.shape
-        W = self.vector_to_matrix(self.weight)
+        W = self.vector_to_matrix(self.weight).to(x.dtype)
         x_reshaped = x.reshape(B * E, S)  # (B*E, S)
         out = x_reshaped @ W  # (B*E, S)
-        out = out + self.bias  # broadcast bias
+        out = out + self.bias.to(x.dtype)  # broadcast bias
         out = out.view(B, E, S)  # reshape back
         return out
 
@@ -77,7 +77,7 @@ class FFTToeplitzCausalLinear(nn.Module):
         # upper triangular Toeplitz matrix first column zero pad
         self.toep_col = torch.cat((torch.tensor([self.toep_weight[0]]), torch.zeros(dim-1).to(self.toep_weight.device)))
         # transpose toep matrix
-        self.c, self.r = self.toep_weight, self.toep_col # transpose Toeplitz matrix
+        self.c, self.r = self.toep_weight, self.toep_col # transpose Toeplitz matrix, ie self.c = row and self.r = c
         self.bias = nn.Parameter(torch.zeros(dim))
 
     def torch_matmul_toeplitz(self, x):
@@ -98,7 +98,7 @@ class FFTToeplitzCausalLinear(nn.Module):
         T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
         p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
         return_shape = (T_nrows, n)
-        embedded_column = torch.cat((self.c, torch.flip(self.r[1:], dims=[0]))) # embedding for circulant
+        embedded_column = torch.cat((self.c, torch.flip(self.r[1:], dims=[0]).to(self.c.device))) # embedding for circulant
         fft_mat = torch.fft.rfft(embedded_column).reshape(-1, 1)
         fft_x = torch.fft.rfft(x, n=p, dim=0)
 
@@ -147,7 +147,7 @@ class ToeplitzHeads(nn.Module):
             )
         else:
             self.mixer_heads = nn.ModuleList(
-                [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                [FFTToeplitzCausalLinear(seq_len) for i in range(n_heads)]
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -221,7 +221,7 @@ class MixerBlock(nn.Module):
 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = ToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+                self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -339,22 +339,22 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 1024
+    tokenized_length = 512
     dim = 512
     layers = 16
-    n_heads = 4
+    n_heads = None
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=True
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
     ).float()
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
-    output_dir = f"{checkpoint_root}/fineweb_copy_h4_toep_512_n16_c1024_b16x4"
+    output_dir = f"{checkpoint_root}/fineweb_fftconv_test"
 
     
-    datasets.config.IN_MEMORY_MAX_SIZE = 50e9
+    datasets.config.IN_MEMORY_MAX_SIZE = 5e9
     train_dataset = load_from_disk(train_path, keep_in_memory=None)
     test_dataset = load_from_disk(test_path, keep_in_memory=None)
     print(len(train_dataset), len(test_dataset))
@@ -363,8 +363,8 @@ if __name__ == "__main__":
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=32,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
@@ -376,6 +376,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=200000,
+       # torch_compile=True
     )
 
     trainer = transformers.Trainer(
