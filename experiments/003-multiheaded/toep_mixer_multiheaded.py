@@ -73,12 +73,13 @@ class FFTToeplitzCausalLinear(nn.Module):
 
         super().__init__()
         # Standard weight + bias
-        self.toep_weight = nn.Parameter(torch.randn(dim))
-        # upper triangular Toeplitz matrix first column zero pad
-        self.toep_col = torch.cat((torch.tensor([self.toep_weight[0]]), torch.zeros(dim-1).to(self.toep_weight.device)))
-        # transpose toep matrix
-        self.c, self.r = self.toep_weight, self.toep_col # transpose Toeplitz matrix, ie self.c = row and self.r = c
+        self.weight = nn.Parameter(torch.randn(1, dim)) # toeplitz op weight
         self.bias = nn.Parameter(torch.zeros(dim))
+
+    def get_rowcol(self, x):
+        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(dim-1)))
+        c, r = self.weight.to(x.device).squeeze(0), toep_col.to(x.device) #first row and col of transposed T
+        return c, r
 
     def torch_matmul_toeplitz(self, x):
         """
@@ -93,15 +94,14 @@ class FFTToeplitzCausalLinear(nn.Module):
             x: torch.tensor, matrix of input values to right multiply
         """
         input_dtype = x.dtype
-        c, r = self.c, self.r
+        c, r = self.get_rowcol(x)
         m, n = x.shape
         T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
         p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
         return_shape = (T_nrows, n)
-        embedded_column = torch.cat((self.c, torch.flip(self.r[1:], dims=[0]).to(self.c.device))) # embedding for circulant
+        embedded_column = torch.cat((c, torch.flip(r[1:], dims=[0]))) # embedding for circulant
         fft_mat = torch.fft.rfft(embedded_column).reshape(-1, 1)
         fft_x = torch.fft.rfft(x, n=p, dim=0)
-
         output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
         formatted_out = output.to(input_dtype) # output to be transposed later
         return formatted_out
@@ -289,7 +289,7 @@ class MLPMixer(nn.Module):
     def _init_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear):
+            if isinstance(m, nn.Linear) or isinstance(m, ToeplitzCausalLinear) or isinstance(m, FFTToeplitzCausalLinear):
                 # Kaiming He initialization for Swish activation
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
 
-    output_dir = f"{checkpoint_root}/fineweb_fftconv_test"
+    output_dir = f"{checkpoint_root}/fineweb_fftconv_512_c512"
 
     
     datasets.config.IN_MEMORY_MAX_SIZE = 5e9
@@ -376,7 +376,7 @@ if __name__ == "__main__":
         overwrite_output_dir=True,
         save_safetensors=True,
         max_steps=200000,
-       # torch_compile=True
+        torch_compile=True
     )
 
     trainer = transformers.Trainer(
