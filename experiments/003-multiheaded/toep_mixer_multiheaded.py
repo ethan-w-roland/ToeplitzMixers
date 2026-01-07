@@ -99,7 +99,7 @@ class FFTToeplitzCausalLinear(nn.Module):
         T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
         p = T_nrows + T_ncols - 1 # length of the Toeplitz vector
         return_shape = (T_nrows, n)
-        embedded_column = torch.cat((c, torch.flip(r[1:], dims=[0]))) # embedding for circulant
+        embedded_column = torch.cat((c, torch.flip(r[1:], dims=[0]))) # circulant embedding
         fft_mat = torch.fft.rfft(embedded_column).reshape(-1, 1)
         fft_x = torch.fft.rfft(x, n=p, dim=0)
         output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
@@ -123,32 +123,51 @@ class ToeplitzHeads(nn.Module):
         hidden_dim: int,
         n_heads: int,
         expanded_convs: bool = False,
-        dropout: float = 0.1,
+        dropout: float = 0.,
+        use_FFT = False
     ):
         super().__init__()
         self.n_heads = n_heads
         self.proj_head = nn.ModuleList(
             [nn.Linear(dim, hidden_dim) for i in range(n_heads)]
-        ).to(device)
+        )
 
         self.out_proj = nn.Linear(dim, dim)
 
         if expanded_convs:
-            self.mixer_heads = nn.ModuleList(
-                [
-                    nn.Sequential(
-                        ToeplitzCausalLinear(seq_len),
-                        nn.SiLU(),
-                        nn.Dropout(dropout),
-                        ToeplitzCausalLinear(seq_len),
-                    )
-                    for i in range(n_heads)
-                ]
-            )
+            if use_FFT:
+                self.mixer_heads = nn.ModuleList(
+                    [
+                        nn.Sequential(
+                            FFTToeplitzCausalLinear(seq_len),
+                            nn.SiLU(),
+                            nn.Dropout(dropout),
+                            FFTToeplitzCausalLinear(seq_len),
+                        )
+                        for i in range(n_heads)]
+                )
+
+            else:
+                self.mixer_heads = nn.ModuleList(
+                    [
+                        nn.Sequential(
+                            ToeplitzCausalLinear(seq_len),
+                            nn.SiLU(),
+                            nn.Dropout(dropout),
+                            ToeplitzCausalLinear(seq_len),
+                        )
+                        for i in range(n_heads)]
+                )
+
         else:
-            self.mixer_heads = nn.ModuleList(
-                [FFTToeplitzCausalLinear(seq_len) for i in range(n_heads)]
-            )
+            if use_FFT:
+                self.mixer_heads = nn.ModuleList(
+                    [FFTToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                )
+            else:
+                self.mixer_heads = nn.ModuleList(
+                    [ToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         activations = []
@@ -178,6 +197,7 @@ class MixerBlock(nn.Module):
         dropout: float = 0.,
         heads=None,
         expanded_convs=False,
+        use_FFT=False,
     ):
 
         super(MixerBlock, self).__init__()
@@ -206,22 +226,32 @@ class MixerBlock(nn.Module):
                 hidden_dim // heads,
                 heads,
                 expanded_convs=expanded_convs,
-            )  # type: ignore[assignment]
+                use_FFT=use_FFT
+            ) 
 
         else:
-
             if expanded_convs:
+                if use_FFT:
+                    # token-mixing layer
+                    self.token_mixing_layer = nn.Sequential(
+                        FFTToeplitzCausalLinear(seq_len),
+                        nn.SiLU(),
+                        nn.Dropout(dropout),
+                        FFTToeplitzCausalLinear(seq_len),
+                    ) 
                 # token-mixing layer
                 self.token_mixing_layer = nn.Sequential(
                     ToeplitzCausalLinear(seq_len),
                     nn.SiLU(),
                     nn.Dropout(dropout),
                     ToeplitzCausalLinear(seq_len),
-                )  # type: ignore[assignment]
-
+                ) 
             else:
                 # flat mixer layer
-                self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len)  # type: ignore[assignment]
+                if use_FFT:
+                    self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len)
+                else:
+                    self.token_mixing_layer = ToeplitzCausalLinear(seq_len)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
@@ -250,6 +280,7 @@ class MLPMixer(nn.Module):
         expanded_convs=False,
         copy=False,
         tie_io=False,
+        use_FFT=False
     ):
 
         super(MLPMixer, self).__init__()
@@ -266,7 +297,7 @@ class MLPMixer(nn.Module):
         self.mixer_blocks = nn.ModuleList(
             [
                 MixerBlock(
-                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs
+                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs, use_FFT=use_FFT
                 )
                 for _ in range(num_blocks)
             ]
@@ -345,8 +376,8 @@ if __name__ == "__main__":
     n_heads = None
 
     model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False
-    ).float()
+        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False, use_FFT=True
+    )
 
     train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
     test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"

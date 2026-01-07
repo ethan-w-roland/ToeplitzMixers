@@ -58,16 +58,20 @@ def parallel_forward(x, weight, bias):
     # apply pad for k>1 convolution
     padded_x = torch.nn.functional.pad(input=x, pad=(0, 0, p, p), mode='constant', value=0)
     padded_e = padded_x.shape[1]
-    processed_x = torch.stack([padded_x[:, i:E + i] for i in range(k)], dim=1)
+    print (padded_x.shape)
+    processed_x = torch.stack([padded_x[:, i:E + i, :] for i in range(k)], dim=1)
     out = processed_x @ W
     accumulated_output = torch.sum(out, dim=1) + bias
     return accumulated_output
 
 
 # weight = torch.tensor([[1,2,3,4], [2,4,6,8]]).to(torch.float)
-weight = torch.tensor([[1,2,3,4], [2,4,6,8], [3,4,5,6],[4,3,2,1]]).to(torch.float)
-bias = torch.zeros(weight[1].shape)
-x = torch.randn((1, 5, 4)).to(torch.float) # [b e t]
-pout = parallel_forward(x, weight, bias)
-out = forward(x, weight, bias)
-assert torch.allclose(pout, out)
+# weight = torch.tensor([[1,2,3,4], [2,4,6,8], [3,4,5,6],[4,3,2,1]]).to(torch.float)
+# bias = torch.zeros(weight[1].shape)
+# x = torch.randn((1, 5, 4)).to(torch.float) # [b e t]
+# pout = parallel_forward(x, weight, bias)
+# out = forward(x, weight, bias)
+# assert torch.allclose(pout, out)
+
+t = torch.tensor([[-100,-100,-100]])
+print (torch.all(t==-10))

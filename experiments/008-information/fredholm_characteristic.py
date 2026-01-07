@@ -70,6 +70,17 @@ def plot_initial(n_initials=50000):
 	plt.close()
 	return
 
+
+@torch.no_grad()
+def kernel_dims(weight_vectors):
+	all_kernels = []
+	for i, weight_vector in enumerate(weight_vectors):
+		m = vector_to_matrix(weight_vector.detach())
+		U, S, Vh = np.linalg.svd(m)
+		all_kernels.append(np.sum(np.where(np.abs(S)>1e-6, 1, 0)))
+	return all_kernels
+
+
 def vector_to_matrix(v: torch.Tensor) -> torch.Tensor:
 	"""
 	Given a vector v of shape (m,), returns an (m x m) matrix M
@@ -195,7 +206,8 @@ if __name__ == "__main__":
 	nn.init.kaiming_normal_(weight_vector)
 	weight_vector = weight_vector.squeeze(0)
 
-	plot_weights(toeplitz_layers)
+	print (kernel_dims(toeplitz_layers))
+	# plot_weights(toeplitz_layers)
 	# plot_winding(weight_vector)
 	# plot_all_windings(toeplitz_layers)
 	# print (calculate_winding_numbers(toeplitz_layers))
