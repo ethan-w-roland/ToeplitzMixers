@@ -76,12 +76,7 @@ class FFTToeplitzCausalLinear(nn.Module):
         self.weight = nn.Parameter(torch.randn(1, dim)) # toeplitz op weight
         self.bias = nn.Parameter(torch.zeros(dim))
         self.p =  next_fast_len(2 * dim - 1, real=True)
-        self.dim = dim
-
-    def get_rowcol(self, x):
-        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(self.dim-1)))
-        c, r = self.weight.to(x.device).squeeze(0), toep_col.to(x.device) #first row and col of transposed T
-        return c, r
+        self.sequence_dim = dim
 
     def torch_matmul_toeplitz(self, x):
         """
@@ -96,24 +91,18 @@ class FFTToeplitzCausalLinear(nn.Module):
             x: torch.tensor, matrix of input values to right multiply
         """
         input_dtype = x.dtype
-        c, r = self.get_rowcol(x)
-        m, n = x.shape
-        T_nrows, T_ncols = r.shape[0], c.shape[0] # Toeplitz matrix rows and cols
-        p = self.p # length of the Toeplitz vector
-        return_shape = (T_nrows, n)
-        embedded_column = torch.cat((c, torch.flip(r, dims=[0]))) # circulant embedding
-        fft_mat = torch.fft.rfft(embedded_column).reshape(-1, 1)
-        fft_x = torch.fft.rfft(x, n=p, dim=0)
-        output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
-        formatted_out = output.to(input_dtype) # output to be transposed later
-        return formatted_out
+        c = self.weight
+        fft_mat = torch.fft.rfft(c, n=self.p)
+        fft_x = torch.fft.rfft(x, n=self.p, dim=-1)
+        output = torch.fft.irfft(fft_mat*fft_x, n=self.p, dim=-1)[..., :self.sequence_dim] # remove pad from inverse FFT
+        return output.to(input_dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, E, S = x.shape
-        x_reshaped = x.reshape(B * E, S)
-        out = self.torch_matmul_toeplitz(x_reshaped.T).T
+        batch_size = x.shape[0]
+        x = rearrange(x, 'b e t -> (b e) t')
+        out = self.torch_matmul_toeplitz(x)
         out = out + self.bias  # broadcast bias
-        out = out.view(B, E, S)  # reshape back
+        out = rearrange(out, '(b e) t -> b e t', b=batch_size)
         return out
 
 class ToeplitzHeads(nn.Module):
