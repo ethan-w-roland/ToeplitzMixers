@@ -75,9 +75,10 @@ class FFTToeplitzCausalLinear(nn.Module):
         # Standard weight + bias
         self.weight = nn.Parameter(torch.randn(1, dim)) # toeplitz op weight
         self.bias = nn.Parameter(torch.zeros(dim))
+        self.dim = dim
 
     def get_rowcol(self, x):
-        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(dim-1)))
+        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(self.dim-1)))
         c, r = self.weight.to(x.device).squeeze(0), toep_col.to(x.device) #first row and col of transposed T
         return c, r
 
@@ -370,7 +371,7 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 512
+    tokenized_length = 1024
     dim = 512
     layers = 16
     n_heads = None
@@ -379,8 +380,8 @@ if __name__ == "__main__":
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False, use_FFT=True
     )
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024-8k"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-8k"
 
     output_dir = f"{checkpoint_root}/fineweb_fftconv_512_c512"
 
@@ -404,8 +405,6 @@ if __name__ == "__main__":
         eval_strategy="steps",
         output_dir=output_dir,
         optim="adamw_torch",
-        overwrite_output_dir=True,
-        save_safetensors=True,
         max_steps=200000,
         torch_compile=True
     )
