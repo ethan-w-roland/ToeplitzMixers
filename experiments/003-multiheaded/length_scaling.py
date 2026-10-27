@@ -11,6 +11,11 @@ from dotenv import load_dotenv
 import shutil
 import torch.nn.functional as F
 from scipy.fft import next_fast_len
+from transformers import LlamaConfig, LlamaForCausalLM
+
+from toep_mixer_multiheaded import FFTToeplitzCausalLinear
+from modules.hyena_trainer_fineweb import HyenaModel
+
 # define a MLP Mixer based causal-language-model using weight masking
 
 class ToeplitzCausalLinear(nn.Module):
@@ -64,7 +69,8 @@ class ToeplitzCausalLinear(nn.Module):
         out = out.view(B, E, S)  # reshape back
         return out
 
-class FFTToeplitzCausalLinear(nn.Module):
+class OptFFTToeplitzCausalLinear(nn.Module):
+
     """
     A Toeplitz layer (masked) implemented using FFTs for O(dn log n) time and (O(dn)) space
     complexity.
@@ -130,10 +136,10 @@ class ToeplitzHeads(nn.Module):
                 self.mixer_heads = nn.ModuleList(
                     [
                         nn.Sequential(
-                            FFTToeplitzCausalLinear(seq_len),
+                            OptFFTToeplitzCausalLinear(seq_len),
                             nn.SiLU(),
                             nn.Dropout(dropout),
-                            FFTToeplitzCausalLinear(seq_len),
+                            OptFFTToeplitzCausalLinear(seq_len),
                         )
                         for i in range(n_heads)]
                 )
@@ -240,7 +246,7 @@ class MixerBlock(nn.Module):
             else:
                 # flat mixer layer
                 if use_FFT:
-                    self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len)
+                    self.token_mixing_layer = OptFFTToeplitzCausalLinear(seq_len)
                 else:
                     self.token_mixing_layer = ToeplitzCausalLinear(seq_len)
 
@@ -361,27 +367,42 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 8192
+    tokenized_length = 8192*2*2
     dim = 512
     layers = 16
-    n_heads = None
+    n_heads = 2
 
-    model = MLPMixer(
-        n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False, use_FFT=True
-    )
+    #model = MLPMixer(
+    #    n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False, use_FFT=True
+    #)
+    config_kwargs = {
+        'hidden_size': dim,
+        'intermediate_size': dim*4, 
+        'num_hidden_layers': layers,
+        'num_attention_heads': n_heads,
+        'vocab_size': n_vocab, 
+        'max_position_embeddings': tokenized_length,
+        'attn_implementation': 'flash_attention_2'
+    }
+
+    config = LlamaConfig(**config_kwargs)
+    model = LlamaForCausalLM(config)
+
+    model = HyenaModel(n_vocab, dim, layers, tokenized_length)
+
 
     output_dir = f"{checkpoint_root}/fineweb_fftconv_512_c512"
 
     input_ids = torch.randint(2, n_vocab, (tokenized_length,))
-    input_ids = [input_ids] * 10000
+    input_ids = [input_ids] * 1000
     train_dataset = datasets.Dataset.from_dict({'input_ids': input_ids}) 
     test_dataset = train_dataset
     print("training begun")
     print(model)
     training_arguments = transformers.TrainingArguments(
         num_train_epochs=2,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         warmup_steps=500,
         eval_steps=4000,
         save_steps=8000,
@@ -410,4 +431,5 @@ if __name__ == "__main__":
     shutil.copy(code_path, output_dir) 
 
     model.train()
+    print (trainer.evaluate())
     trainer.train()

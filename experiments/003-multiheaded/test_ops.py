@@ -189,6 +189,20 @@ def torch_matmul_toeplitz(c, r, x):
     output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=0)[:T_nrows, :] # remove pad from inverse FFT
     return output.to(input_dtype)
 
+def opt_torch_toeplitz(x, c, p, sequence_dim=512): 
+    input_dtype = x.dtype
+    fft_mat = torch.fft.rfft(c, n=p)
+    fft_x = torch.fft.rfft(x, n=p, dim=-1)
+    output = torch.fft.irfft(fft_mat*fft_x, n=p, dim=-1)[..., :sequence_dim] # remove pad from inverse FFT
+    return output.to(input_dtype)
+
+
+def opt_torch_toeplitz(x, c, p, sequence_dim=512):
+    f_c = torch.fft.rfft(c, n=p) / p                       # scale the tiny filter spectrum instead
+    f_x = torch.fft.rfft(x, n=p, dim=-1)
+    y = torch.fft.irfft(f_c * f_x, n=p, dim=-1, norm="forward")   # inverse left unscaled
+    return y[..., :sequence_dim]
+
 
 def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
     from numpy.fft import fft, ifft, rfft, irfft
@@ -260,6 +274,23 @@ print (torch_fft_output)
 print (torch.abs(torch.max(ref_fft_output - torch_fft_output)) < 1e-5)
 assert torch.allclose(ref_fft_output, torch_fft_output)
 
+
+from torch.profiler import profile, ProfilerActivity
+from scipy.fft import next_fast_len
+
+sequence_len = 32768
+x = torch.randn((1, 512, sequence_len)).to('cuda')
+c = torch.randn((sequence_len)).to('cuda')
+p = next_fast_len(2*sequence_len-1, real=True)
+with torch.no_grad():
+    for _ in range(5):
+        opt_torch_toeplitz(x, c, p, sequence_dim=sequence_len)
+    torch.cuda.synchronize()
+    with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU]) as prof:
+        for _ in range(10):
+            opt_torch_toeplitz(x, c, p, sequence_dim=sequence_len)
+        torch.cuda.synchronize()
+print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20, max_name_column_width=120))
 
 # HEADS = 3
 # WEIGHT = nn.Parameter(torch.randn(HEADS, 6))
