@@ -2,6 +2,7 @@ import torch
 from einops import rearrange
 import torch.nn as nn
 import numpy as np
+from scipy.fft import next_fast_len
 
 """
 Tests equivalence of parallelized multi-headed mixer operation (via fully materialized weight matmult and bias add) with sequential mat mult, ignoring
@@ -166,6 +167,29 @@ def parallel_forward(x) -> torch.Tensor:
     return output
 
 
+def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
+    from numpy.fft import fft, ifft, rfft, irfft
+
+    n, m = x.shape
+    T_nrows = len(c)
+    T_ncols = len(r)
+    p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
+    return_shape = (T_nrows, m)
+
+    # accommodate empty arrays
+    if x.size == 0:
+        return np.empty_like(x, shape=return_shape)
+
+    embedded_col = np.concatenate((c, r[-1:0:-1]))
+
+    # Real inputs; using rfft is faster
+    fft_mat = rfft(embedded_col, axis=0).reshape(-1, 1)
+    fft_x = rfft(x, n=p, axis=0)
+    mat_times_x = irfft(fft_mat*fft_x, axis=0, n=p)[:T_nrows, :]
+
+    return mat_times_x.reshape(*return_shape)
+
+
 def torch_matmul_toeplitz(c, r, x):
     """
     FFT-based Toeplitz matmul: computes TX, where c is the first col of T and r the first row of T.
@@ -190,31 +214,18 @@ def torch_matmul_toeplitz(c, r, x):
     return output.to(input_dtype)
 
 
-def matmul_toeplitz(c, r, x, check_finite=False, workers=None):
-    from numpy.fft import fft, ifft, rfft, irfft
-
-    n, m = x.shape
-    T_nrows = len(c)
-    T_ncols = len(r)
-    p = T_nrows + T_ncols - 1  # equivalent to len(embedded_col)
-    return_shape = (T_nrows, m)
-
-    # accommodate empty arrays
-    if x.size == 0:
-        return np.empty_like(x, shape=return_shape)
-
-    embedded_col = np.concatenate((c, r[-1:0:-1]))
-
-    # Real inputs; using rfft is faster
-    fft_mat = rfft(embedded_col, axis=0).reshape(-1, 1)
-    fft_x = rfft(x, n=p, axis=0)
-    mat_times_x = irfft(fft_mat*fft_x, axis=0, n=p)[:T_nrows, :]
-
-    return mat_times_x.reshape(*return_shape)
+def optimized_torch_matmul_toeplitz(c, r, x):          # x: (..., S), transform axis last
+    S = x.shape[-1]
+    print (S)
+    N = next_fast_len(2 * S - 1, real=True)         # >= 2S-1 removes the wraparound
+    f_c = torch.fft.rfft(c.float(), n=N)            # (N//2+1,)
+    f_x = torch.fft.rfft(x.float(), n=N, dim=-1)
+    y = torch.fft.irfft(f_c * f_x, n=N, dim=-1)[..., :S]
+    return y.to(x.dtype)
+    
 
 weight = torch.tensor([3, 1, 2])
 c = torch.cat((torch.tensor([weight[0]]), torch.zeros(len(weight)-1)))
-print (c)
 
 T = torch.tensor([
     [1.,3.,4.],
@@ -224,13 +235,11 @@ T = torch.tensor([
 
 t_r = T[0, :]
 t_c = T[:, 0]
-X = torch.tensor([[3.,2.,1.], [3.,2.,5.]])
 
-print (X@T, (T.T @ X.T).T)
-
-t_r_np = np.array([1.,3.,4.])
-t_c_np = np.array([1.,0.,0.])
-X_np = np.array([[3.,2.,1.], [3.,2.,5.]])
+X = torch.tensor([
+    [3.,2.,1.], 
+    [3.,2.,5.]
+])
 
 
 T = torch.tensor([
@@ -243,30 +252,23 @@ T = torch.tensor([
 
 t_r = T[0, :]
 t_c = T[:, 0]
-X = torch.tensor([[-0.3,2.,-1.1,-0.2,2.1], [3.1,-2.2,5.,-0.3,0.4]])
+X = torch.tensor([[-0.3,2.,-1.1,-0.2,2.1], [3.1,-2.2,5.,-0.3,0.4],[3.1,-2.2,5.,-0.3,0.4], [3.1,-2.2,5.,-0.3,0.4]]) # shape e, t
 
 t_r_np = np.array(t_r)
 t_c_np = np.array(t_c)
 X_np = np.array(X)
 
+assert torch.allclose(X@T, (T.T @ X.T).T)
+reference_matmult = X@T
+
 # To convert (X @ T converts to T.T @ X.T).T:  swap t_r and t_c (ie transpose T), transpose X, FFT and rFFT, and transpose the output.
-# ref_fft_matmult = matmul_toeplitz(t_r_np, t_c_np, X_np.T)
-
 ref_fft_output = torch.tensor(matmul_toeplitz(t_r_np, t_c_np, X_np.T), dtype=torch.float).T
-torch_fft_output = torch_matmul_toeplitz(t_r, t_c, X.T).to(torch.float).T
-matmul_output = X @ T
-print (ref_fft_output)
-print (torch_fft_output)
-print (torch.abs(torch.max(ref_fft_output - torch_fft_output)) < 1e-5)
-assert torch.allclose(ref_fft_output, torch_fft_output)
+print (torch.abs(torch.max(reference_matmult - ref_fft_output)) < 1e-5)
 
+# ref_fft_output = torch.tensor(matmul_toeplitz(t_r_np, t_c_np, X_np.T), dtype=torch.float).T
+transpose_torch_fft_output = torch_matmul_toeplitz(t_r, t_c, X.T).to(torch.float).T
+torch_fft_output = optimized_torch_matmul_toeplitz(t_r, t_c, X).to(torch.float)
 
-# HEADS = 3
-# WEIGHT = nn.Parameter(torch.randn(HEADS, 6))
-# BIAS = nn.Parameter(torch.zeros(HEADS, 6))
-# x = torch.randn((32, 9, 6)).to(torch.float) # [b e t] shape
-# pout = parallel_forward(x)
-# out = forward(x)
-
-# # Test that parallelized head op is identical to sequential head op
-# assert torch.allclose(pout, out, rtol=1e-3)
+print (torch.abs(torch.max(reference_matmult - torch_fft_output)) < 1e-5)
+print (torch.abs(torch.max(reference_matmult - transpose_torch_fft_output)) < 1e-5)
+assert torch.allclose(reference_matmult, torch_fft_output)

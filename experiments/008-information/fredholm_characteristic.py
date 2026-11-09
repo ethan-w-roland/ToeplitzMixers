@@ -167,7 +167,7 @@ def plot_weights(weight_vectors):
 	axes = axes.flatten()
 
 	for i, ax in enumerate(axes):
-		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='berlin', interpolation='nearest')
+		ax.imshow(vector_to_matrix(weight_vectors[i]).detach(), cmap='coolwarm', interpolation='nearest')
 		# ax.set_title(f'Layer {i}', fontsize='small')
 		ax.axis('off')
 
@@ -200,13 +200,14 @@ if __name__ == "__main__":
 	checkpoint_path = checkpoint_root + '/fineweb_autoencoding_toep_512_c512.bin'
 	model.load_state_dict(torch.load(checkpoint_path))
 	toeplitz_layers = [model.decoderblocks[i].token_mixing_layer.weight.squeeze(0) for i in range(len(model.decoderblocks))]
-	weight_vector = toeplitz_layers[15] # 8 has high char
+	# weight_vector = toeplitz_layers[15] # 8 has high char
 
-	weight_vector = nn.Parameter(torch.randn(1, 512))
-	nn.init.kaiming_normal_(weight_vector)
-	weight_vector = weight_vector.squeeze(0)
+	# weight_vector = nn.Parameter(torch.randn(1, 512))
+	# nn.init.kaiming_normal_(weight_vector)
+	# weight_vector = weight_vector.squeeze(0)
 
-	print (kernel_dims(toeplitz_layers))
+	plot_weights(toeplitz_layers)
+	# print (kernel_dims(toeplitz_layers))
 	# plot_weights(toeplitz_layers)
 	# plot_winding(weight_vector)
 	# plot_all_windings(toeplitz_layers)

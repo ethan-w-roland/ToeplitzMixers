@@ -77,7 +77,7 @@ class FFTToeplitzCausalLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(dim))
 
     def get_rowcol(self, x):
-        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(dim-1)))
+        toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(self.dim-1)))
         c, r = self.weight.to(x.device).squeeze(0), toep_col.to(x.device) #first row and col of transposed T
         return c, r
 
