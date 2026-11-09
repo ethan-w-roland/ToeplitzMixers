@@ -400,7 +400,7 @@ if __name__ == "__main__":
     n_vocab = len(tokenizer)
     print("Vocab size: ", n_vocab)
 
-    tokenized_length = 512
+    tokenized_length = 1024
     dim = 512
     layers = 16
     n_heads = None
@@ -409,8 +409,8 @@ if __name__ == "__main__":
         n_vocab, dim, tokenized_length, layers, heads=n_heads, expanded_convs=False, copy=False, use_FFT=True
     )
 
-    train_path = f"{data_root}/fineweb-edu-tokenized-train-c512"
-    test_path = f"{data_root}/fineweb-edu-tokenized-test-c512"
+    train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024-8k"
+    test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-8k"
 
     output_dir = f"{checkpoint_root}/fineweb_fftconv_512_c512"
 
@@ -434,8 +434,6 @@ if __name__ == "__main__":
         eval_strategy="steps",
         output_dir=output_dir,
         optim="adamw_torch",
-        overwrite_output_dir=True,
-        save_safetensors=True,
         max_steps=200000,
         torch_compile=True
     )
