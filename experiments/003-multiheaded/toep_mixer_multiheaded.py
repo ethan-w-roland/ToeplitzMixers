@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
+from scipy.fft import next_fast_len
 import transformers
 from transformers import AutoTokenizer
 import datasets
@@ -68,13 +69,18 @@ class FFTToeplitzCausalLinear(nn.Module):
     """
     A Toeplitz layer (masked) implemented using FFTs for O(dn log n) time and (O(dn)) space
     complexity.
+
+    By default the optimized axis-last convolution implementation is used. Set
+    optimized=False to use the transposed (axis-first) circulant implementation instead.
     """
-    def __init__(self, dim: int):
+    def __init__(self, dim: int, optimized: bool = True):
 
         super().__init__()
         # Standard weight + bias
         self.weight = nn.Parameter(torch.randn(1, dim)) # toeplitz op weight
         self.bias = nn.Parameter(torch.zeros(dim))
+        self.dim = dim
+        self.optimized = optimized
 
     def get_rowcol(self, x):
         toep_col = torch.cat((torch.tensor([self.weight[0, 0]]), torch.zeros(self.dim-1)))
@@ -106,10 +112,29 @@ class FFTToeplitzCausalLinear(nn.Module):
         formatted_out = output.to(input_dtype) # output to be transposed later
         return formatted_out
 
+    def optimized_matmul(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Optimized FFT-based Toeplitz matmul: computes xT, where the first row of T is
+        this layer's weight vector. Transforms along the last axis of x, so no
+        transposition of the input is required.
+
+        Args:
+            x: torch.tensor, matrix of input values, transform axis last
+        """
+        S = x.shape[-1]
+        N = next_fast_len(2 * S - 1, real=True) # >= 2S-1 removes the wraparound
+        f_c = torch.fft.rfft(self.weight.reshape(-1).float(), n=N) # toeplitz kernel
+        f_x = torch.fft.rfft(x.float(), n=N, dim=-1)
+        y = torch.fft.irfft(f_c * f_x, n=N, dim=-1)[..., :S] # remove pad from inverse FFT
+        return y.to(x.dtype)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, E, S = x.shape
         x_reshaped = x.reshape(B * E, S)
-        out = self.torch_matmul_toeplitz(x_reshaped.T).T
+        if self.optimized:
+            out = self.optimized_matmul(x_reshaped)
+        else:
+            out = self.torch_matmul_toeplitz(x_reshaped.T).T
         out = out + self.bias  # broadcast bias
         out = out.view(B, E, S)  # reshape back
         return out
@@ -124,7 +149,8 @@ class ToeplitzHeads(nn.Module):
         n_heads: int,
         expanded_convs: bool = False,
         dropout: float = 0.,
-        use_FFT = False
+        use_FFT = False,
+        optimized: bool = True
     ):
         super().__init__()
         self.n_heads = n_heads
@@ -139,10 +165,10 @@ class ToeplitzHeads(nn.Module):
                 self.mixer_heads = nn.ModuleList(
                     [
                         nn.Sequential(
-                            FFTToeplitzCausalLinear(seq_len),
+                            FFTToeplitzCausalLinear(seq_len, optimized=optimized),
                             nn.SiLU(),
                             nn.Dropout(dropout),
-                            FFTToeplitzCausalLinear(seq_len),
+                            FFTToeplitzCausalLinear(seq_len, optimized=optimized),
                         )
                         for i in range(n_heads)]
                 )
@@ -162,7 +188,7 @@ class ToeplitzHeads(nn.Module):
         else:
             if use_FFT:
                 self.mixer_heads = nn.ModuleList(
-                    [FFTToeplitzCausalLinear(seq_len) for i in range(n_heads)]
+                    [FFTToeplitzCausalLinear(seq_len, optimized=optimized) for i in range(n_heads)]
                 )
             else:
                 self.mixer_heads = nn.ModuleList(
@@ -198,6 +224,7 @@ class MixerBlock(nn.Module):
         heads=None,
         expanded_convs=False,
         use_FFT=False,
+        optimized=True,
     ):
 
         super(MixerBlock, self).__init__()
@@ -226,7 +253,8 @@ class MixerBlock(nn.Module):
                 hidden_dim // heads,
                 heads,
                 expanded_convs=expanded_convs,
-                use_FFT=use_FFT
+                use_FFT=use_FFT,
+                optimized=optimized
             ) 
 
         else:
@@ -234,22 +262,23 @@ class MixerBlock(nn.Module):
                 if use_FFT:
                     # token-mixing layer
                     self.token_mixing_layer = nn.Sequential(
-                        FFTToeplitzCausalLinear(seq_len),
+                        FFTToeplitzCausalLinear(seq_len, optimized=optimized),
                         nn.SiLU(),
                         nn.Dropout(dropout),
-                        FFTToeplitzCausalLinear(seq_len),
+                        FFTToeplitzCausalLinear(seq_len, optimized=optimized),
                     ) 
-                # token-mixing layer
-                self.token_mixing_layer = nn.Sequential(
-                    ToeplitzCausalLinear(seq_len),
-                    nn.SiLU(),
-                    nn.Dropout(dropout),
-                    ToeplitzCausalLinear(seq_len),
-                ) 
+                else:
+                    # token-mixing layer
+                    self.token_mixing_layer = nn.Sequential(
+                        ToeplitzCausalLinear(seq_len),
+                        nn.SiLU(),
+                        nn.Dropout(dropout),
+                        ToeplitzCausalLinear(seq_len),
+                    ) 
             else:
                 # flat mixer layer
                 if use_FFT:
-                    self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len)
+                    self.token_mixing_layer = FFTToeplitzCausalLinear(seq_len, optimized=optimized)
                 else:
                     self.token_mixing_layer = ToeplitzCausalLinear(seq_len)
 
@@ -280,7 +309,8 @@ class MLPMixer(nn.Module):
         expanded_convs=False,
         copy=False,
         tie_io=False,
-        use_FFT=False
+        use_FFT=False,
+        optimized=True
     ):
 
         super(MLPMixer, self).__init__()
@@ -297,7 +327,7 @@ class MLPMixer(nn.Module):
         self.mixer_blocks = nn.ModuleList(
             [
                 MixerBlock(
-                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs, use_FFT=use_FFT
+                    hidden_dim, seq_len, heads=heads, expanded_convs=expanded_convs, use_FFT=use_FFT, optimized=optimized
                 )
                 for _ in range(num_blocks)
             ]
