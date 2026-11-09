@@ -20,7 +20,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Drop this directory from sys.path; the model file below is loaded explicitly by path.
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.getcwd()) != HERE]
 _spec = importlib.util.spec_from_file_location(
-    "toep_mixer_multiheaded", os.path.join(HERE, "toep_mixer_multiheaded.py")
+    "toep_mixer_multiheaded",
+    os.path.join(os.path.dirname(HERE), "toep_mixer_multiheaded.py"),
 )
 m = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(m)  # load by path: running scripts from this dir shadows stdlib `profile`

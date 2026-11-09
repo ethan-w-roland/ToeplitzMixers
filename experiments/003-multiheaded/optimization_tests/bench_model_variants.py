@@ -13,7 +13,6 @@ import gc
 import importlib.util
 import os
 import sys
-import time
 
 import torch
 
@@ -23,7 +22,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Drop this directory from sys.path; the model file below is loaded explicitly by path.
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.getcwd()) != HERE]
 _spec = importlib.util.spec_from_file_location(
-    "toep_mixer_multiheaded", os.path.join(HERE, "toep_mixer_multiheaded.py")
+    "toep_mixer_multiheaded",
+    os.path.join(os.path.dirname(HERE), "toep_mixer_multiheaded.py"),
 )
 m = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(m)
@@ -141,7 +141,6 @@ def bench(seq_len, hidden, heads, blocks, vocab, device, fp16, iters, expanded=F
         stacks[opt_name] = model
 
     model = stacks["optimized"]
-    x = torch.randn(1, hidden, seq_len, device=device)      # (B, E, S): token-mixing layout
     xs = torch.randn(1, seq_len, hidden, device=device)     # (B, S, E): channel layout
 
     def embed():
